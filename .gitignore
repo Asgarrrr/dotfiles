@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+
+# Editor/temp
+*~
+*.swp
+*.swo
+
+# Machine-local Claude permissions (per-session allowlist)
+.claude/settings.local.json

@@ -1,0 +1,10 @@
+[user]
+	name = Jérémy Caruelle
+	email = caruellej@hotmail.fr
+	signingkey = /Users/asgarrrr/.ssh/id_ed25519.pub
+[gpg]
+	format = ssh
+[commit]
+	gpgsign = true
+[core]
+	excludesfile = ~/.gitignore_global

@@ -1,0 +1,90 @@
+// Zed settings
+//
+// For information on how to configure Zed, see the Zed
+// documentation: https://zed.dev/docs/configuring-zed
+//
+// To see all of Zed's default settings without changing your
+// custom settings, run `zed: open default settings` from the
+// command palette (cmd-shift-p / ctrl-shift-p)
+{
+	"cli_default_open_behavior": "new_window",
+ "outline_panel": {
+  "dock": "left"
+ },
+ "git_panel": {
+  "dock": "left"
+ },
+ "edit_predictions": {
+  "provider": "copilot"
+ },
+ "project_panel": {
+  "auto_fold_dirs": false,
+  "auto_reveal_entries": true,
+  "dock": "left",
+  "hide_gitignore": false
+ },
+ "agent": {
+  "sidebar_side": "left",
+  "dock": "right",
+  "default_model": {
+   "provider": "copilot_chat",
+   "model": "gpt-5.3-codex",
+   "enable_thinking": false,
+   "effort": "high"
+  },
+  "favorite_models": [],
+  "model_parameters": []
+ },
+ "agent_servers": {
+  "codex-acp": {
+   "type": "registry"
+  },
+  "claude-acp": {
+   "type": "registry"
+  }
+ },
+ "collaboration_panel": {
+		"dock": "left",
+  "button": false
+	},
+	"telemetry": {
+		"diagnostics": false,
+		"metrics": false
+	},
+	"session": {
+		"trust_all_worktrees": true
+	},
+	"ui_font_size": 14,
+	"buffer_font_size": 14,
+	"theme": {
+		"mode": "system",
+		"light": "One Light",
+		"dark": "Modern Vesper"
+	},
+	"experimental.theme_overrides": {
+		"border": "#1a1a1a",
+	},
+	"ui_font_family": "Departure Mono",
+	"buffer_font_family": "Departure Mono",
+	"title_bar": {
+		"show_user_menu": false
+	},
+	"auto_install_extensions": {
+		"biome": true
+	},
+	"format_on_save": "on",
+	"formatter": {
+		"language_server": { "name": "biome" }
+	},
+	"lsp": {
+		"biome": {
+			"settings": {
+				"require_config_file": true
+			}
+		}
+	},
+	"code_actions_on_format": {
+    "source.fixAll.biome": true,
+    "source.organizeImports.biome": true
+  }
+}

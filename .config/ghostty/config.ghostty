@@ -1,0 +1,45 @@
+# Font
+font-family = Departure Mono
+font-size = 14
+
+# Theme
+theme = Vesper
+window-colorspace = display-p3
+
+# Window
+window-padding-x = 16
+window-padding-y = 10
+window-padding-balance = true
+window-inherit-font-size = true
+window-step-resize = true
+macos-titlebar-style = tabs
+macos-titlebar-proxy-icon = hidden
+window-save-state = always
+window-padding-color = extend-always
+
+# Shell
+shell-integration = zsh
+shell-integration-features = cursor,sudo,title,ssh-env
+
+# Cursor
+cursor-style = bar
+cursor-style-blink = false
+cursor-click-to-move = true
+
+# Behavior
+scrollback-limit = 10000
+copy-on-select = false
+clipboard-trim-trailing-spaces = true
+mouse-hide-while-typing = true
+notify-on-command-finish = unfocused
+notify-on-command-finish-action = no-bell,notify
+notify-on-command-finish-after = 10s
+resize-overlay = never
+
+# Bell
+bell-features = attention,border,no-title,no-system
+
+# Visual
+background-opacity = 0.95
+background-opacity-cells = true
+background-blur-radius = 40
