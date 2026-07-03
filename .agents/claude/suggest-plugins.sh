@@ -2,10 +2,21 @@
 # Scans a project for stack signals (package.json deps, config files, API calls)
 # and suggests which dotfiles-skills plugins to enable there, then optionally
 # writes .claude/settings.json for you — so you never have to remember plugin names.
-# Usage: suggest-plugins.sh [project-dir]
+# Usage: suggest-plugins.sh [project-dir] [--yes]
+#   --yes / -y : write settings.json without prompting (for non-interactive use,
+#                e.g. invoked by Claude Code through the /suggest-plugins command)
 set -euo pipefail
 
-PROJECT_DIR="$(cd "${1:-.}" && pwd)"
+YES=0
+PROJECT_ARG="."
+for arg in "$@"; do
+  case "$arg" in
+    --yes|-y) YES=1 ;;
+    *) PROJECT_ARG="$arg" ;;
+  esac
+done
+
+PROJECT_DIR="$(cd "$PROJECT_ARG" && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MARKETPLACE="$REPO_ROOT/.claude-plugin/marketplace.json"
@@ -64,7 +75,13 @@ echo "Detected signals suggest enabling:"
 printf '  - %s\n' "${unique[@]}"
 echo
 
-read -r -p "Write $SETTINGS ? [y/N] " ans
+if [ "$YES" -eq 1 ]; then
+  ans=y
+else
+  # Non-interactive callers (no TTY, e.g. Claude's Bash tool) hit EOF here —
+  # `read` fails, so default to "no" instead of letting `set -e` abort the script.
+  read -r -p "Write $SETTINGS ? [y/N] " ans || ans=n
+fi
 if [[ "$ans" =~ ^[Yy]$ ]]; then
   mkdir -p "$PROJECT_DIR/.claude"
   filter='{ enabledPlugins: ( [ $ARGS.positional[] | { (. + "@dotfiles-skills"): true } ] | add ) }'
