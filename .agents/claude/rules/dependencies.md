@@ -1,5 +1,10 @@
 ## Dependencies
 
+This applies whenever *you* pick a library, algorithm, or implementation
+approach — not only when I explicitly ask for "the best" or "recommended"
+option. A silent choice made mid-task is still a choice; research it the same
+way.
+
 Before reaching for a library, answer two questions: *"Can I write this correctly in under ~30 lines?"* and *"Is this a solved, well-maintained problem domain?"*
 
 - **Don't add a library** for things the language or runtime already handles well: date arithmetic, simple string manipulation, UUID generation, basic HTTP, shallow object merging. One focused function beats one new `package.json` entry.
@@ -18,3 +23,10 @@ Before reaching for a library, answer two questions: *"Can I write this correctl
 - **Live-data MCPs > training memory.** Use Context7, DeepWiki, or registry
   MCPs when available rather than recalling versions or APIs from training —
   versions move, APIs are renamed, libraries get deprecated.
+- **Scale the depth to the stakes.** A throwaway helper or an easily-swapped
+  utility only needs the registry + staleness + e18e check above. A choice
+  that's expensive to reverse (auth, database, core algorithm, anything named
+  in an ADR-worthy decision) or one I explicitly ask you to recommend warrants
+  the full protocol in the `research-before-recommending` skill — multiple
+  candidates, cited sources, evidence block. Don't run the heavy version on
+  every small pick; don't skip the light version on any pick.
