@@ -1,9 +1,17 @@
 ---
 name: research-before-recommending
-description: Force web research, SOTA comparison, registry verification, freshness check, slopsquatting probe, deprecation cross-check, and a mini-ADR output before recommending an algorithm, library, framework, configuration, or architecture pattern. Triggers when the user asks for a "best", "modern", "SOTA", or "recommended" choice, when about to introduce a dependency, or when picking an algorithm.
+description: Full-strength research protocol (multi-candidate comparison, registry/freshness/slopsquatting verification, deprecation cross-check, cited evidence, mini-ADR) for HIGH-STAKES or explicit-ask implementation decisions — a core dependency (auth, database, crypto), a load-bearing algorithm, or an architecture pattern. Triggers when the user explicitly asks for a "best", "modern", "SOTA", or "recommended" choice, or when about to introduce a hard-to-reverse dependency/algorithm. For low-stakes, easily-reversible picks, use the lighter check in the dependencies rule instead — don't invoke this skill for those.
 ---
 
 # Research before recommending
+
+This is the full-strength version of the `dependencies.md` rule (always
+active) — use it for high-stakes or explicit-ask decisions: introducing a
+core dependency (auth, database, crypto), picking a load-bearing algorithm,
+or when I explicitly ask for "the best" / "recommended" option. For a
+low-stakes, easily-reversible pick, the lighter registry/staleness/e18e check
+in `dependencies.md` is enough — don't run the full protocol below on every
+small choice.
 
 Do not name a library, framework, or algorithm until this protocol completes. Avoid defaulting to a training-distribution favorite (Mulberry32, Express, Mongoose, Redux, Moment, Lodash…) — that is the failure mode this skill exists to prevent. ~20% of libraries cited by LLMs do not exist on the registry (slopsquatting); a confident recommendation without verification is a security risk.
 
@@ -69,5 +77,3 @@ Write the decision as `docs/adr/NNNN-<topic>.md` with sections: **Context**, **D
 - ❌ Recommending without registry resolution — slopsquatting risk.
 - ❌ Comparing on benchmarks from a different language (Rust SIMD ≠ JS perf).
 - ❌ Hedging ("you might consider"). Pick one. Defend it. Or say "I don't know" out loud.
-
-$ARGUMENTS
