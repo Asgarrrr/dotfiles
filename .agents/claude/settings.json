@@ -102,12 +102,6 @@
         "source": "github",
         "repo": "sentrux/sentrux"
       }
-    },
-    "dotfiles-skills": {
-      "source": {
-        "source": "github",
-        "repo": "Asgarrrr/dotfiles"
-      }
     }
   },
   "feedbackSurveyRate": 0,
