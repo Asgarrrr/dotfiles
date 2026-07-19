@@ -6,7 +6,7 @@ Global AI hub for this machine.
 
 - shared skills live in `./.agents/skills`
 - global Claude instructions live in `./.agents/claude/CLAUDE.md`
-- global Codex preferences live in `./.agents/codex/config.toml`
+- global Codex preferences live in `./.agents/codex/config.toml.tmpl` (`just ai-link` renders it to `~/.codex/config.toml`)
 - global Claude Code preferences live in `./.agents/claude/settings.json`
 
 ## Scope

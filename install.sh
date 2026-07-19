@@ -19,6 +19,12 @@ if [ -f "$DOTFILES_DIR/Brewfile" ]; then
     brew bundle --file="$DOTFILES_DIR/Brewfile"
 fi
 
+if [ ! -d "$HOME/.oh-my-zsh" ]; then
+    echo "02b. Installing oh-my-zsh..."
+    RUNZSH=no KEEP_ZSHRC=yes CHSH=no \
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+fi
+
 if command -v fnm &>/dev/null; then
   fnm install --lts
 fi
@@ -38,5 +44,12 @@ fi
 echo "04. Linking config files..."
 ( cd "$DOTFILES_DIR" && just relink )
 
-echo "05. Checking AI tooling..."
+if command -v zsh &>/dev/null && [[ "$SHELL" != *zsh ]]; then
+    echo "05. Setting zsh as the default shell..."
+    zsh_path="$(command -v zsh)"
+    grep -qxF "$zsh_path" /etc/shells || echo "$zsh_path" | sudo tee -a /etc/shells >/dev/null
+    chsh -s "$zsh_path" || echo "    Could not change shell automatically — run: chsh -s $zsh_path"
+fi
+
+echo "06. Checking AI tooling..."
 ( cd "$DOTFILES_DIR" && just ai-doctor )

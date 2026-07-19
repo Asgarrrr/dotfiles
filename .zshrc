@@ -2,17 +2,19 @@ export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 DOTFILES_DIR="$HOME/dotfiles"
 export STARSHIP_CONFIG="$DOTFILES_DIR/.config/starship.toml"
 
+# Homebrew — Apple Silicon's default PATH omits /opt/homebrew/bin, so put brew
+# on PATH ourselves. This also exports HOMEBREW_PREFIX used further down.
+if [[ -x /opt/homebrew/bin/brew ]]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -x /usr/local/bin/brew ]]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
+
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME=""
 plugins=(git)
 
-source "$ZSH/oh-my-zsh.sh"
-
-if [[ -d /opt/homebrew ]]; then
-  export HOMEBREW_PREFIX="/opt/homebrew"
-elif [[ -d /usr/local ]]; then
-  export HOMEBREW_PREFIX="/usr/local"
-fi
+[[ -f "$ZSH/oh-my-zsh.sh" ]] && source "$ZSH/oh-my-zsh.sh"
 
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
 

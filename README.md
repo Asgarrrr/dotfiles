@@ -39,11 +39,12 @@ then symlinks every config into `$HOME`.
 ## Tasks
 
 ```bash
-just          # list everything
-just update   # update brew + runtimes
-just doctor   # check the setup
-just relink   # refresh symlinks
-just macos    # optional macOS defaults
+just            # list everything
+just update     # update brew + runtimes
+just doctor     # check shell setup (commands + symlinks)
+just ai-doctor  # check AI hub (claude/codex + skills)
+just relink     # refresh symlinks (includes ai-link)
+just macos      # optional macOS defaults
 ```
 
 ## Layout

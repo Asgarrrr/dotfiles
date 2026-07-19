@@ -13,3 +13,6 @@
 
 # Machine-local Claude permissions (per-session allowlist)
 .claude/settings.local.json
+
+# Generated from config.toml.tmpl by `just ai-link`
+.agents/codex/config.toml

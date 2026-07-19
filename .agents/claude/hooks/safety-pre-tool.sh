@@ -27,7 +27,13 @@ if [ "$tool_name" = "Bash" ]; then
   [ -z "$cmd" ] && exit 0
 
   # Destructive patterns from CLAUDE.md §11
-  if printf '%s' "$cmd" | grep -qE '(^|[;&|]\s*)(rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+-[a-zA-Z]*f|rm\s+-[a-zA-Z]*f[a-zA-Z]*\s+-[a-zA-Z]*r|rm\s+-rf|rm\s+-fr)\b'; then
+  # rm with BOTH a recursive and a force flag (any order/spelling, incl. sudo,
+  # interspersed flags, and long forms). Deliberately conservative: it may block
+  # a benign command that pairs an unrelated -f elsewhere — bypass with
+  # CLAUDE_SKIP_SAFETY_HOOK=1 when that happens.
+  if printf '%s' "$cmd" | grep -qE '(^|[;&|]\s*)(sudo\s+)?rm\b' \
+     && printf '%s' "$cmd" | grep -qE '(^|[[:space:]])(-[a-zA-Z]*r[a-zA-Z]*|--recursive)([[:space:]]|$)' \
+     && printf '%s' "$cmd" | grep -qE '(^|[[:space:]])(-[a-zA-Z]*f[a-zA-Z]*|--force)([[:space:]]|$)'; then
     deny "Blocked: rm -rf is forbidden (CLAUDE.md §11). Use \`trash <file>\` or ask for explicit confirmation."
   fi
 

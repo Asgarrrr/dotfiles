@@ -69,7 +69,9 @@ doctor:
   echo "commands:"
   for c in brew zsh fnm zoxide fzf starship just; do check_cmd "$c"; done
   echo "symlinks:"
-  for l in "$HOME/.zshrc" "$HOME/.gitconfig" "$HOME/.gitignore_global" "$HOME/.hushlogin"; do check_link "$l"; done
+  for l in "$HOME/.zshrc" "$HOME/.gitconfig" "$HOME/.gitignore_global" "$HOME/.hushlogin" \
+           "$HOME/.config/starship.toml" "$HOME/.config/zed/settings.json" \
+           "$HOME/.config/ghostty/config.ghostty" "$HOME/.config/fastfetch/config.jsonc"; do check_link "$l"; done
   echo "—"
   echo "passed: $ok  failed: $fail"
   [[ $fail -eq 0 ]]

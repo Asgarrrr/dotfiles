@@ -117,6 +117,5 @@
   "theme": "dark",
   "preferredNotifChannel": "ghostty",
   "agentPushNotifEnabled": false,
-  "skipAutoPermissionPrompt": true,
-  "voiceEnabled": true
+  "skipAutoPermissionPrompt": true
 }
