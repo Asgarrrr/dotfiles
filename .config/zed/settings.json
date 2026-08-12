@@ -56,13 +56,14 @@
 	},
 	"ui_font_size": 14,
 	"buffer_font_size": 14,
+	"tab_size": 2,
 	"theme": {
 		"mode": "system",
 		"light": "One Light",
 		"dark": "Modern Vesper"
 	},
 	"experimental.theme_overrides": {
-		"border": "#1a1a1a",
+		"border": "#1a1a1a"
 	},
 	"ui_font_family": "Departure Mono",
 	"buffer_font_family": "Departure Mono",
@@ -73,18 +74,62 @@
 		"biome": true
 	},
 	"format_on_save": "on",
-	"formatter": {
-		"language_server": { "name": "biome" }
-	},
 	"lsp": {
 		"biome": {
 			"settings": {
-				"require_config_file": true
+				// false = biome formate avec ses défauts même sans biome.json.
+				// Sinon, dans un projet non configuré, format_on_save est un
+				// no-op silencieux : Zed ne retombe pas sur prettier quand le
+				// language server nommé dans `formatter` est absent.
+				"require_config_file": false
 			}
 		}
 	},
-	"code_actions_on_format": {
-    "source.fixAll.biome": true,
-    "source.organizeImports.biome": true
-  }
+	// Biome ne s'attache qu'aux langages web. Scoper `formatter` et
+	// `code_actions_on_format` par langage : à la racine ils s'appliquaient
+	// aussi aux buffers Rust/Python/shell, où biome est absent et où Zed
+	// n'a pas de fallback — rustfmt et ruff ne tournaient plus au save.
+	// tab_size explicite pour Rust/Python : le `tab_size: 2` global écrase
+	// sinon les valeurs par défaut de ces langages.
+	"languages": {
+		"JavaScript": {
+			"formatter": { "language_server": { "name": "biome" } },
+			"code_actions_on_format": {
+				"source.fixAll.biome": true,
+				"source.organizeImports.biome": true
+			}
+		},
+		"JSX": {
+			"formatter": { "language_server": { "name": "biome" } },
+			"code_actions_on_format": {
+				"source.fixAll.biome": true,
+				"source.organizeImports.biome": true
+			}
+		},
+		"TypeScript": {
+			"formatter": { "language_server": { "name": "biome" } },
+			"code_actions_on_format": {
+				"source.fixAll.biome": true,
+				"source.organizeImports.biome": true
+			}
+		},
+		"TSX": {
+			"formatter": { "language_server": { "name": "biome" } },
+			"code_actions_on_format": {
+				"source.fixAll.biome": true,
+				"source.organizeImports.biome": true
+			}
+		},
+		"JSON": {
+			"formatter": { "language_server": { "name": "biome" } }
+		},
+		"JSONC": {
+			"formatter": { "language_server": { "name": "biome" } }
+		},
+		"CSS": {
+			"formatter": { "language_server": { "name": "biome" } }
+		},
+		"Rust": { "tab_size": 4 },
+		"Python": { "tab_size": 4 }
+	}
 }

@@ -39,6 +39,10 @@ resize-overlay = never
 # Bell
 bell-features = attention,border,no-title,no-system
 
+# Quick terminal + tab labeling (multi-clauding)
+keybind = global:cmd+backquote=toggle_quick_terminal
+keybind = ctrl+shift+period=prompt_tab_title
+
 # Visual
 background-opacity = 0.95
 background-opacity-cells = true

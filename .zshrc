@@ -35,3 +35,6 @@ if [[ -t 0 && -t 1 ]]; then
   command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"
   [[ -n "${HOMEBREW_PREFIX:-}" && -f "$HOMEBREW_PREFIX/opt/zsh-syntax-highlighting/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]] && source "$HOMEBREW_PREFIX/opt/zsh-syntax-highlighting/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 fi
+
+# bun completions
+[ -s "/Users/asgarrrr/.bun/_bun" ] && source "/Users/asgarrrr/.bun/_bun"

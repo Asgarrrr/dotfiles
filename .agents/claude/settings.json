@@ -1,12 +1,13 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
-    "CLAUDE_CODE_DISABLE_1M_CONTEXT": "1",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT": "1",
     "ENABLE_TOOL_SEARCH": "auto"
   },
-  "attribution": {},
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "includeGitInstructions": false,
   "permissions": {
     "allow": [
@@ -27,7 +28,8 @@
       "Bash(bunx *)",
       "Bash(just *)",
       "Bash(jq *)",
-      "Bash(ls*)",
+      "Bash(ls)",
+      "Bash(ls *)",
       "Bash(which *)",
       "Bash(command *)",
       "Bash(mkdir *)",
@@ -36,6 +38,7 @@
     "defaultMode": "auto"
   },
   "model": "sonnet",
+  "disableClaudeAiConnectors": true,
   "hooks": {
     "PreToolUse": [
       {
@@ -63,14 +66,13 @@
         ]
       }
     ],
-    "PreCompact": [
+    "InstructionsLoaded": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/precompact.sh",
-            "timeout": 10,
-            "statusMessage": "Saving session digest..."
+            "command": "~/.claude/hooks/log-instructions.sh",
+            "timeout": 5
           }
         ]
       }
@@ -90,11 +92,16 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "bash $HOME/.claude/statusline-command.sh"
+    "command": "bash $HOME/.claude/statusline-command.sh",
+    "refreshInterval": 60
   },
   "enabledPlugins": {
     "sentrux@sentrux-marketplace": true,
-    "clangd-lsp@claude-plugins-official": true
+    "clangd-lsp@claude-plugins-official": true,
+    "paper-desktop@paper": true,
+    "frontend-design@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "sentrux-marketplace": {
@@ -102,21 +109,31 @@
         "source": "github",
         "repo": "sentrux/sentrux"
       }
+    },
+    "cloudflare": {
+      "source": {
+        "source": "github",
+        "repo": "cloudflare/skills"
+      }
+    },
+    "paper": {
+      "source": {
+        "source": "github",
+        "repo": "paper-design/agent-plugins"
+      }
     }
   },
   "feedbackSurveyRate": 0,
   "alwaysThinkingEnabled": true,
-  "effortLevel": "medium",
+  "effortLevel": "high",
   "showClearContextOnPlanAccept": true,
   "voice": {
     "enabled": true,
     "mode": "hold"
   },
-  "autoMemoryEnabled": false,
   "skipWorkflowUsageWarning": true,
   "theme": "dark",
   "preferredNotifChannel": "ghostty",
   "agentPushNotifEnabled": false,
-  "skipAutoPermissionPrompt": true,
-  "voiceEnabled": true
+  "skipAutoPermissionPrompt": true
 }
