@@ -8,7 +8,11 @@
   opportunistic renames, no speculative abstractions, no interfaces with one
   implementer.
 - Match local conventions: read 2–3 neighboring files before adding one.
-- Comments explain *why*, never *what*. Never narrate the diff.
+- A comment carries what the code cannot: an external format, a constraint, an
+  alternative that was rejected for a reason that would not be obvious. Never
+  explain the language, never restate the line. Test it by tense — a comment
+  constrains the next edit, it does not recount the last one. History lives in
+  git, not above the function.
 - Never disable a test, lint rule, or type to get green — fix it and flag it.
 - Formatting is the PostToolUse hook's job: don't pre-format, don't argue,
   address what it surfaces.

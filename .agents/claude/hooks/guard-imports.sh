@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
 # PostToolUse Write|Edit — reject imports of packages that do not exist.
 #
-# Package hallucination runs 5-22% of suggestions by model and language, and
-# attackers register the fabricated names, so a made-up import is a supply-chain
-# hole rather than a typo. It is also the one code pathology with an exact
-# ground truth: a name is on the registry or it is not. Everything else in this
-# area is a judgement call; this is a lookup.
-#
-# Instructions asking a model to check its own imports sit on the losing side of
-# the evidence — self-assessment without an oracle. This is the oracle.
+# A CLAUDE.md instruction was the rejected alternative: asking a model to check
+# its own imports is self-assessment without an oracle, which is the shape that
+# loses. Do not move this check back into a rule file.
 #
 # Design constraints, in priority order:
 #   1. Fails OPEN. Network down, registry 5xx, jq missing, curl missing -> exit 0.
