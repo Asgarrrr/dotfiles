@@ -47,6 +47,42 @@ cannot do that will confirm whatever rule you feed it.
    prediction is the finding** — it means the evidence does not transfer to this
    model, this repo, or this task shape.
 
+## First run — task `retry`, Opus 5, 2026-09-07
+
+Five runs: R0 three times, R1 and N1 once each. Baseline `tasks/fetch-user.ts`.
+
+| Condition | loc | excess_distance |
+|-----------|-----|-----------------|
+| R0 | 12 | 0.654 |
+| R0 (replicate) | 11 | 0.462 |
+| R0 (replicate) | 12 | 0.654 |
+| R1 | 12 | 0.577 |
+| N1 | 10 | 0.346 |
+
+**Noise floor: 0.192.** That is the spread of R0 against itself, with the rule
+held constant. It is the number that makes the rest readable:
+
+- **R1 moves 0.077 — below the floor.** Anthropic's over-engineering prompt is
+  indistinguishable from no rule here. Not refuted, unresolved: the effect, if
+  any, is smaller than this bench can see at n=3.
+- **N1 moves 0.308 — above the floor**, and N1 is the rule I predicted inert.
+  Prediction missed. It is n=1 and needs replication before it means anything.
+
+The finding is the floor itself. Run each condition once, as the obvious protocol
+would, and this task reports "Anthropic's rule improves faithfulness 12%" — an
+artifact of a bench whose own variance is 2.5× the effect being claimed. Any
+future result here is noise until it clears 0.192.
+
+Caveat on the numbers: the baseline files carry a header comment, which every
+condition copied forward. That inflates `comment_lines` by 3-4 uniformly and
+makes the comment metrics unusable on this task. Strip the headers before
+reading comment results.
+
+**Next**: replicate N1 three times. If it holds above the floor, a rule measured
+inert in the literature is doing something on Opus 5, and the literature does not
+transfer. If it collapses toward R0, the bench needs n>3 per condition before it
+can answer anything.
+
 ## What this harness cannot tell you
 
 - **n is small.** Published studies run 328–400 problems. A handful of tasks
