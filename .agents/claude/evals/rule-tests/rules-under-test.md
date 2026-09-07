@@ -83,6 +83,87 @@ inert in the literature is doing something on Opus 5, and the literature does no
 transfer. If it collapses toward R0, the bench needs n>3 per condition before it
 can answer anything.
 
+## Experiment 2 — does an explicit verification instruction cost anything?
+
+Anthropic's Opus 5 page makes a falsifiable claim about this repo's own
+`rules/verification.md`:
+
+> "Claude Opus 5 verifies its own work without being told to. If your prompt
+> contains explicit verification instructions […] remove them: instructions like
+> these cause over-verification on Claude Opus 5, and **removing them reduces
+> wasted tokens with no loss in quality**."
+
+Two measurable halves — cost, and quality. Both are available here.
+
+**Design.** Same `retry` task. Every run inherits this repo's CLAUDE.md, held
+constant, so this measures the *marginal* effect of adding explicit verification
+instruction on top of the existing setup — which is what Anthropic says to remove.
+
+- **V-off** — the R0 runs above, reused. Cost: 46786 / 46864 / 46784 tokens, 2 tool
+  calls each.
+- **V-on** — identical prompt plus Anthropic's own examples of the instruction to
+  remove: "include a final verification step for any non-trivial task" and "use a
+  subagent to verify".
+
+**Metrics.** Cost is `subagent_tokens` and `tool_uses`. Quality is `loc` and
+`excess_distance` from `metrics.py`. Anthropic's claim is directional on both:
+cost up, quality flat.
+
+**Registered predictions**, before running:
+
+| | Prediction | What refutes it |
+|---|---|---|
+| Cost | V-on spends more tokens and more tool calls than V-off | No separation beyond V-off's own spread |
+| Quality | No improvement — flat within the 0.192 noise floor | V-on improves `excess_distance` past the floor, which would mean the tokens buy something and Anthropic's "no loss in quality" understates the trade |
+
+The cost half is the safer bet: more instruction reliably produces more work. The
+quality half is the one worth running — if verification instructions do buy
+quality on this repo's setup, the guidance does not transfer here and
+`verification.md` earns its cost.
+
+Also replicating N1 ×3, since Experiment 1 left it at n=1 above the noise floor.
+
+### Results — Opus 5, 2026-09-07, n=3 per condition
+
+**Cost.** Both predictions held, and the separation is not marginal.
+
+| | tokens | tool calls | wall clock |
+|---|---|---|---|
+| V-off | 46784 / 46864 / 46786 | 2, 2, 2 | 8.1 / 8.8 / 9.2 s |
+| V-on | 48639 / 49020 / 49771 | 4, 4, 5 | 67 / 68 / 70 s |
+
+V-off's own token spread is **80**. V-on sits ~2000 above it — a 22× separation,
+so this is not noise. Tool calls double. Wall clock goes **8×**, and that is the
+number that actually costs you something: 9 seconds became 68 for identical work.
+
+**Quality.** No gain.
+
+| Group | n | loc (median) | excess_distance (median) | range |
+|---|---|---|---|---|
+| V-off | 3 | 12 | 0.654 | 0.462 – 0.654 |
+| V-on | 3 | 12 | 0.577 | 0.346 – 0.577 |
+| N1 | 3 | 10 | 0.346 | 0.346 – 0.654 |
+| R1 | 1 | 12 | 0.577 | — |
+
+V-on improves `excess_distance` by 0.077 — **below the 0.192 noise floor**, and
+identical to R1's non-result. Anthropic's claim holds on both halves here: the
+instruction buys tokens, tool calls, and 8× latency, and buys no measurable
+quality.
+
+**N1 collapsed on replication, and that is the harness working.** At n=1 it
+scored 0.346 and looked like the best condition in Experiment 1 — a missed
+prediction. At n=3 its range is 0.346–0.654, overlapping V-off's 0.462–0.654
+almost entirely. The persona rule is inert, exactly as the literature reports
+(p>0.01) and exactly as predicted. The Experiment 1 "miss" was the noise floor
+being read as a result, which is the specific error the negative control exists
+to catch. It caught it — one experiment late.
+
+**Scope of this result.** One task, one model, n=3, and every run inherits this
+repo's CLAUDE.md. It measures the marginal cost of *adding* explicit verification
+instruction to an already-verification-heavy setup. It does not measure what
+happens if you remove the existing rules, which is a different experiment and the
+one that would actually justify editing `rules/verification.md`.
+
 ## What this harness cannot tell you
 
 - **n is small.** Published studies run 328–400 problems. A handful of tasks
