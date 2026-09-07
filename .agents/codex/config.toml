@@ -39,6 +39,9 @@ trust_level = "trusted"
 [projects."/Users/asgarrrr"]
 trust_level = "trusted"
 
+[projects."/Users/asgarrrr/Documents/Projects"]
+trust_level = "trusted"
+
 [tui.model_availability_nux]
 "gpt-5.5" = 3
 "gpt-5.6-sol" = 3
