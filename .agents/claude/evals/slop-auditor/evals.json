@@ -1,0 +1,71 @@
+{
+  "agent_name": "slop-auditor",
+  "notes": "Each fixture is a diff with a known ground truth stated in its header comment. Run the agent against the fixture alone — never paste the header's ground truth into the prompt. An eval passes only when every expectation holds.",
+  "evals": [
+    {
+      "id": 1,
+      "fixture": "fixtures/01-buried-fix.diff",
+      "prompt": "Audit this diff. It was produced by an agent asked to fix a pagination off-by-one.",
+      "expected_output": "A removable fraction near 85%, with the three-line fix named as the load-bearing set.",
+      "expectations": [
+        "Names `(req.page - 1) * req.size` as the load-bearing change",
+        "Flags the unused `clampPage` helper as removable — nothing calls it",
+        "Flags both `logger.debug` calls as removable search residue",
+        "Flags the try/catch as removable, and notes it changes behaviour by swallowing errors into a silent `offset: 0` fallback",
+        "Reports a removable fraction as an explicit ratio with both counts, not an adjective",
+        "Does not flag `totalPages` — it is untouched context, not part of the diff"
+      ]
+    },
+    {
+      "id": 2,
+      "fixture": "fixtures/02-comment-noise.diff",
+      "prompt": "Audit this diff.",
+      "expected_output": "Comment noise flagged wholesale; the retry logic kept; the jitter rationale kept.",
+      "expectations": [
+        "Flags the comments that restate their own line (`// Import the sleep helper`, `// Return the result`, `// Throw the last error`)",
+        "KEEPS the full-jitter comment — it records why deterministic backoff was rejected, which the code cannot express",
+        "Classifies the retry logic itself as load-bearing — this is a comment finding, not a code finding",
+        "Does not propose renaming, restructuring, or restyling anything"
+      ]
+    },
+    {
+      "id": 3,
+      "fixture": "fixtures/03-unverified-symbols.diff",
+      "prompt": "Audit this diff.",
+      "expected_output": "Three imports separated by verification outcome, each with the lookup that produced it.",
+      "expectations": [
+        "Performs an actual registry or documentation lookup per symbol and reports what it returned",
+        "Resolves `p-retry` as real, and does not flag it",
+        "Reports `express-async-validator-pro` as unresolved, and frames it as a supply-chain risk rather than a typo",
+        "Catches `z.string().emailStrict()` — a fabricated method on a package that does exist, which a package-only check would miss",
+        "Never asserts a package does not exist without naming the lookup; 'could not verify' is an acceptable verdict, invention is not"
+      ]
+    },
+    {
+      "id": 4,
+      "fixture": "fixtures/04-invented-logic.diff",
+      "prompt": "Audit this diff. The brief was: reject signups with a malformed email address.",
+      "expected_output": "The validation kept, the normalization flagged as behaviour nobody requested.",
+      "expectations": [
+        "Classifies `EMAIL_RE` and the throw as load-bearing — that is the brief",
+        "Flags `normalizeEmail` as invented logic outside the brief",
+        "Names a concrete distinguishing input, e.g. `A.User+tag@x.com` and `auser@x.com` now collide on insert where they did not before",
+        "Notes that the diff changes stored data, not just accepted input",
+        "Does not treat passing tests as evidence of correctness here — the agent wrote those tests against its own behaviour"
+      ]
+    },
+    {
+      "id": 5,
+      "fixture": "fixtures/05-clean-control.diff",
+      "prompt": "Audit this diff.",
+      "expected_output": "0% removable. No findings.",
+      "expectations": [
+        "Reports a 0% removable fraction",
+        "Produces an empty Delete section and stops",
+        "Does NOT flag the error message string, the choice of RangeError, or the guard's placement",
+        "Does NOT propose returning NaN, null, or 0 instead of throwing — that is a taste argument, out of scope",
+        "FAILS the eval if it manufactures any finding to justify the run"
+      ]
+    }
+  ]
+}

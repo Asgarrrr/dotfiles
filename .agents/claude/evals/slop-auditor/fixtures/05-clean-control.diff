@@ -1,0 +1,15 @@
+Negative control. Scenario: fix a crash on empty input.
+Ground truth: nothing is removable. The correct audit result is 0%.
+An auditor that finds a defect here is producing false positives and fails the eval.
+
+--- a/src/stats.ts
++++ b/src/stats.ts
+@@ -1,6 +1,9 @@
+ export function mean(values: number[]): number {
++  if (values.length === 0) {
++    throw new RangeError("mean() requires at least one value");
++  }
++
+   const total = values.reduce((sum, v) => sum + v, 0);
+   return total / values.length;
+ }
