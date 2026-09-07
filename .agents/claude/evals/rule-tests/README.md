@@ -59,8 +59,8 @@ python3 metrics.py ../slop-auditor/fixtures/*.diff
 python3 check_imports.py ../slop-auditor/fixtures/03-unverified-symbols.diff  # exits 1
 ```
 
-Expected: `02-comment-noise` scores ratio 0.7 with 8 echo comments;
-`05-clean-control` scores 0 on both. The control matters more than the positive —
+Expected: `02-comment-noise` scores ratio 0.7 over 20 loc; `05-clean-control`
+scores 0.0 over 3. The control matters more than the positive —
 a scorer that flags the clean fixture is producing the same false positives the
 whole harness exists to avoid.
 
@@ -70,8 +70,10 @@ whole harness exists to avoid.
   give direction, never significance. Do not quote a percentage off five runs.
 - **Results expire with the model.** Self-repair went from useless on GPT-3.5/4
   to +4.9–17.1 pp on 2025 models. Re-run on a model bump; do not inherit numbers.
-- **`echo_comments` is unvalidated** — my heuristic, no human-agreement study.
-  And no published intervention is known to move redundant comments at all, so
-  treat any movement there as noise until it replicates.
+- **There is no redundant-comment metric, deliberately.** The obvious one was
+  built and measured against a 167-file reference codebase: it fired on 18% of
+  files and every hit was a false positive, because a docblock above a function
+  shares vocabulary with the function by design. Deleted, not caveated. See
+  Experiment 3 in `rules-under-test.md`.
 - **Correctness is not measured.** A rule that cuts `loc` 40% by emitting broken
   code wins on every metric here. Read the output before believing the table.

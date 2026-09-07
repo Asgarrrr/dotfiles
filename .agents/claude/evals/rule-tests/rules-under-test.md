@@ -208,8 +208,40 @@ cannot be run without the CLAUDE.md to find out. Both readings say: build
 nothing. The second reading would make `coding.md`'s comment rule the only rule
 in this repo with any observed effect.
 
-**Decision: do not build the detector.** `echo_comments` stays in `metrics.py`
-as a diagnostic, labelled unvalidated, and gates nothing.
+### Re-measured against a real reference codebase
+
+The 45-file sample above was weak — half of it was config files. Re-run against
+`arkyve/apps/pipeline2`: **167 files, 28762 loc**, a codebase its author holds up
+as a reference.
+
+| | median | p90 | p99 | max |
+|---|---|---|---|---|
+| `comment_ratio` | 0.298 | 0.828 | 1.686 | 2.143 |
+| `echo_comments` | 0 | 1 | 3 | 4 |
+
+This overturns both metrics at once.
+
+**`comment_ratio` does not separate anything.** The reference repo's median is
+0.298. The Opus 5 samples scored 0.296, 0.333, 0.639 — squarely inside the normal
+range of code held up as good. A high comment ratio is a style, not a pathology.
+
+**`echo_comments` fires on 18% of the reference repo, and every hit inspected is
+a false positive.** The mechanism is structural, not a tuning problem:
+
+```
+/** u16 count + count×u16. */          -> function u16Array(c: Cur)
+ * The stage folds four TRANSFORM ...  -> test("the lua stage version folds ...
+// ─── readColor ───                   -> function readColor(c: Cur): string
+```
+
+A docblock above a function necessarily shares vocabulary with the function it
+documents — that is what a docblock is for. A section header names the section
+below it. The heuristic punishes exactly the practice it should reward, and no
+threshold fixes that, because the signal it keys on *is* good documentation.
+
+**Decision: `echo_comments` is deleted from `metrics.py`.** Not caveated,
+deleted. "Unvalidated" was the wrong label; it is measured harmful, and leaving a
+false-positive machine in the toolbox guarantees someone reaches for it later.
 
 ## What this harness cannot tell you
 

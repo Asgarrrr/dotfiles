@@ -15,17 +15,17 @@ Metrics and what backs them:
                     at their threshold, so treat it as a ranking signal.
   comment_ratio     Comment lines over code lines. Redundant comments are the
                     statistical signature of LLM code (arXiv:2605.13280).
-  echo_comments     Comments whose content words reappear in the line below.
-                    Heuristic, mine, unvalidated — see LIMITS.
   branch_density    Branch keywords per code line. Complexity proxy.
   max_nesting       Deepest indentation. Complexity proxy.
   imports           Extracted for registry resolution by check_imports.py.
 
 LIMITS, so nobody reads more into a number than it holds:
   - Line-based, not AST-based. A brace-heavy style inflates loc.
-  - echo_comments is a heuristic I wrote for this harness. It is not validated
-    against human judgement, and no published intervention is known to move
-    redundant comments at all. Report it, do not optimise against it.
+  - There is no redundant-comment metric here on purpose. The obvious one,
+    comment-echoes-the-line-below, was built and measured: on a 167-file
+    reference repo every single hit was a false positive, because a docblock
+    above a function necessarily shares vocabulary with the function it
+    documents. It punished good documentation. Removed rather than caveated.
   - excess_distance needs a meaningful baseline. Against an empty baseline it
     degenerates to "how long is this", which is a different question.
 """
@@ -49,14 +49,6 @@ IMPORT = re.compile(
     re.X,
 )
 
-# Words that carry no signal when comparing a comment to the code beneath it.
-STOP = {
-    "the", "a", "an", "this", "that", "to", "of", "for", "in", "on", "and",
-    "or", "is", "are", "we", "it", "its", "with", "from", "into", "as", "by",
-    "then", "if", "be", "will", "do", "does", "our", "us", "at", "not",
-}
-
-
 def added_lines(text):
     """Return payload lines. Unified diffs contribute only their added lines."""
     lines = text.splitlines()
@@ -72,45 +64,6 @@ def classify(line):
     if s.startswith(COMMENT_PREFIXES):
         return "comment"
     return "code"
-
-
-def content_words(text):
-    """Content words, with identifiers split into their parts.
-
-    `lastError` has to become {last, error} or a comment saying "hold the last
-    error" never matches the line it describes — which was this heuristic's
-    biggest miss before splitting.
-    """
-    words = set()
-    for tok in IDENT.findall(text):
-        for part in re.split(r"_|(?<=[a-z0-9])(?=[A-Z])", tok):
-            p = part.lower()
-            if len(p) > 2 and p not in STOP:
-                words.add(p)
-    return words
-
-
-def echo_comments(lines):
-    """Comments whose content words mostly reappear in the next code line.
-
-    '// Import the sleep helper' above 'import { sleep } from "./sleep"' shares
-    {import, sleep, helper} against {import, sleep}: 2/3 overlap, flagged.
-    A comment recording a constraint shares almost nothing, and survives.
-    """
-    hits = []
-    for i, line in enumerate(lines):
-        if classify(line) != "comment":
-            continue
-        nxt = next((l for l in lines[i + 1:] if classify(l) == "code"), None)
-        if nxt is None:
-            continue
-        words = content_words(line.strip().lstrip("/#*- "))
-        if not words:
-            continue
-        overlap = words & content_words(nxt)
-        if len(overlap) / len(words) >= 0.5:
-            hits.append({"line": i + 1, "comment": line.strip(), "code": nxt.strip()})
-    return hits
 
 
 def levenshtein(a, b):
@@ -149,7 +102,6 @@ def score(text, baseline=None):
         "loc": n_code,
         "comment_lines": n_comment,
         "comment_ratio": round(n_comment / n_code, 3) if n_code else 0.0,
-        "echo_comments": len(echo_comments(lines)),
         "branch_density": round(
             sum(len(BRANCH.findall(l)) for l in code) / n_code, 3
         ) if n_code else 0.0,
