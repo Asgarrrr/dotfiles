@@ -2,8 +2,11 @@
 # PostToolUse Write|Edit — reject imports of packages that do not exist.
 #
 # A CLAUDE.md instruction was the rejected alternative: asking a model to check
-# its own imports is self-assessment without an oracle, which is the shape that
-# loses. Do not move this check back into a rule file.
+# its own imports is self-assessment without an oracle. Measured on 2026-era
+# models — self-minimization removes 2-13% of patch slop against an external
+# oracle's 18-33%, and corrupts the patch 3.8-44.9% of the time
+# (arXiv:2607.18161). That gap is model-dependent; re-measure it before moving
+# this check back into a rule file.
 #
 # Design constraints, in priority order:
 #   1. Fails OPEN. Network down, registry 5xx, jq missing, curl missing -> exit 0.
