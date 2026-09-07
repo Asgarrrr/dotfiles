@@ -164,6 +164,53 @@ instruction to an already-verification-heavy setup. It does not measure what
 happens if you remove the existing rules, which is a different experiment and the
 one that would actually justify editing `rules/verification.md`.
 
+## Experiment 3 — is a comment-noise detector worth building? No.
+
+The literature has no published intervention against redundant comments, and the
+Readability Spectrum authors call for LLM-tailored checks nobody has shipped. So:
+build one? Measured first.
+
+**Human baseline**, 45 hand-written TS files from `~/Documents/Projects`, ≥15 loc:
+
+| | median | p90 | max |
+|---|---|---|---|
+| `comment_ratio` | 0.042 | 0.260 | **0.815** |
+| `echo_comments` | 0 | 1 | **2** |
+
+`comment_ratio` is dead on arrival as a gate: the most-commented human file
+scores 0.815, *above* the LLM fixture's 0.70. A well-documented `vite.config.ts`
+is indistinguishable from slop by ratio.
+
+**LLM samples**, Opus 5, prompted "include comments so the code is easy to
+follow" — the ask designed to trigger the pathology:
+
+| file | loc | ratio | echo |
+|---|---|---|---|
+| comments-a | 36 | 0.639 | **0** |
+| comments-b | 48 | 0.333 | **0** |
+| comments-c | 27 | 0.296 | **0** |
+
+Zero. The detector separates nothing, because there is nothing here to separate.
+Both populations sit at 0–2 echo comments.
+
+**What it did separate was `fixtures/02-comment-noise.diff`, which I wrote
+myself to be egregious.** Measuring a caricature you authored is not evidence.
+This is the second time in this session an artifact of mine was read as a
+finding; see [[measure-noise-floor-before-reading-results]].
+
+**Confound worth naming.** Every sample inherits this repo's CLAUDE.md, which
+carries "Comments explain *why*, never *what*. Never narrate the diff." The
+comments-c agent volunteered, unprompted: "Comments state rationale (why a Set,
+why the snapshot, why empty sets are pruned) rather than restating the code" —
+the rule, restated by an agent applying it. So this cannot distinguish "Opus 5
+lacks the pathology" from "the existing rule suppresses it", and a subagent
+cannot be run without the CLAUDE.md to find out. Both readings say: build
+nothing. The second reading would make `coding.md`'s comment rule the only rule
+in this repo with any observed effect.
+
+**Decision: do not build the detector.** `echo_comments` stays in `metrics.py`
+as a diagnostic, labelled unvalidated, and gates nothing.
+
 ## What this harness cannot tell you
 
 - **n is small.** Published studies run 328–400 problems. A handful of tasks
