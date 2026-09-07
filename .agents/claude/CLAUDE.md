@@ -27,6 +27,22 @@ verify → ship**.
 - An approach that failed twice → stop and flag it; suggest rewinding instead
   of layering a third correction.
 
+## Delegation
+
+- Localized change (1-2 files, no architectural decision): handle it directly.
+- Otherwise: use `architect` to split the work; it delegates implementation.
+- `architect` defaults to PLAN mode: it returns the decomposition and stops.
+  Nothing is implemented before you approve it. Relaunch with an explicit go.
+- Never delegate a task whose result you couldn't verify yourself.
+- Uncertain design, hard-to-reverse choice → `advisor` before committing.
+- Unconfirmed library, version, or API → `researcher` before writing against it.
+  Both return opinions and evidence, never edits. Consult them before `architect`
+  freezes a brief, not after. When they conflict, arbitrate explicitly and say why.
+- Builder ≠ verifier: `reviewer` reads the diff against the brief, after every
+  `implementer` batch and before any completion claim on a multi-file change.
+- Subagents inherit this file and its rules. Briefs carry only what they cannot
+  derive — project-local conventions, invariants, excluded approaches.
+
 ## Orchestration
 
 - Large multi-file tasks: prefer the `big-feature` workflow
@@ -36,6 +52,7 @@ verify → ship**.
   inventory). Read it — especially the don't-recreate table — before creating
   any new file, helper, or type.
 
+@~/.claude/rules/prose.md
 @~/.claude/rules/coding.md
 @~/.claude/rules/dependencies.md
 @~/.claude/rules/verification.md
