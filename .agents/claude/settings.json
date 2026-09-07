@@ -37,7 +37,7 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "sonnet",
+  "model": "opus[1m]",
   "disableClaudeAiConnectors": true,
   "hooks": {
     "PreToolUse": [
@@ -90,6 +90,9 @@
       }
     ]
   },
+  "worktree": {
+    "baseRef": "fresh"
+  },
   "statusLine": {
     "type": "command",
     "command": "bash $HOME/.claude/statusline-command.sh",
@@ -124,7 +127,6 @@
     }
   },
   "feedbackSurveyRate": 0,
-  "alwaysThinkingEnabled": true,
   "effortLevel": "high",
   "showClearContextOnPlanAccept": true,
   "voice": {
