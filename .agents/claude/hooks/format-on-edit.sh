@@ -29,6 +29,19 @@ find_biome_config() {
   return 1
 }
 
+find_rust_edition() {
+  local dir
+  dir="$(dirname "$1")"
+  while [ "$dir" != "/" ]; do
+    if [ -f "$dir/Cargo.toml" ]; then
+      sed -n 's/^edition[[:space:]]*=[[:space:]]*"\([0-9]*\)".*/\1/p' "$dir/Cargo.toml" | head -1
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
 case "$EXT" in
   js|jsx|ts|tsx|css|scss|json|html|md|yaml|yml|graphql)
     PRETTIER=$(find_local_bin "$FILE" prettier 2>/dev/null)
@@ -48,7 +61,20 @@ case "$EXT" in
     command -v gofmt &>/dev/null && gofmt -w "$FILE" 2>/dev/null
     ;;
   rs)
-    command -v rustfmt &>/dev/null && rustfmt "$FILE" 2>/dev/null
+    # `rustfmt` invoked standalone defaults to edition 2015 whatever its version
+    # — only `cargo fmt` reads Cargo.toml and passes the edition on. The two
+    # disagree on `use`-group ordering, so on a 2024 crate this hook was writing
+    # files that `cargo fmt --check` then rejected, on lines nobody had touched.
+    # Falls back to the old behaviour when no edition is found, so a project
+    # without one is unaffected.
+    if command -v rustfmt &>/dev/null; then
+      RUST_EDITION=$(find_rust_edition "$FILE")
+      if [ -n "$RUST_EDITION" ]; then
+        rustfmt --edition "$RUST_EDITION" "$FILE" 2>/dev/null
+      else
+        rustfmt "$FILE" 2>/dev/null
+      fi
+    fi
     ;;
 esac
 exit 0
