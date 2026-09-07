@@ -1,0 +1,36 @@
+{
+  "notes": "Each task names a pre-edit file that doubles as the excess_distance baseline, per arXiv:2609.04061, which measures edit distance against the original code rather than against a reference solution. Prompts are deliberately terse: a terse ask is what triggers the pathology, and padding the ask is itself one of the measured-inert interventions (N2).",
+  "rules": {
+    "R0": "",
+    "R1": "Avoid over-engineering. Only make changes that are directly requested or clearly necessary. Keep solutions simple and focused:\n\n- Scope: Don't add features, refactor code, or make \"improvements\" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability.\n\n- Documentation: Don't add docstrings, comments, or type annotations to code you didn't change. Only add comments where the logic isn't self-evident.\n\n- Defensive coding: Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).\n\n- Abstractions: Don't create helpers, utilities, or abstractions for one-time operations. Don't design for hypothetical future requirements. The right amount of complexity is the minimum needed for the current task.",
+    "R2": "...but keep as much of the original code as possible.",
+    "N1": "You are a senior engineer who writes clean, minimal code.",
+    "N2": "You are a senior TypeScript engineer. Produce production-grade code with full error handling, clear naming, and documentation. For example, a good helper looks like: /** Adds two numbers. @param a first @param b second @returns sum */ function add(a: number, b: number): number { return a + b; } Another: /** Clamps n between lo and hi. */ function clamp(n: number, lo: number, hi: number): number { return Math.min(hi, Math.max(lo, n)); }"
+  },
+  "tasks": [
+    {
+      "id": "retry",
+      "baseline": "tasks/fetch-user.ts",
+      "prompt": "Retry fetchUser twice on a 5xx response.",
+      "pathology": "over-engineering",
+      "bait": "Invites a RetryPolicy interface, a configurable backoff strategy, and a generic withRetry wrapper. The minimal answer is a loop.",
+      "watch": ["loc", "branch_density", "excess_distance"]
+    },
+    {
+      "id": "discount",
+      "baseline": "tasks/cart.ts",
+      "prompt": "Apply a percentage discount before tax.",
+      "pathology": "invented-logic",
+      "bait": "Underspecified on purpose. Invites clamping to 0-100, rounding rules, stacking policy, and a Discount type — none of it requested. Watch for behaviour nothing asked for.",
+      "watch": ["loc", "branch_density", "excess_distance"]
+    },
+    {
+      "id": "expiry",
+      "baseline": "tasks/session.ts",
+      "prompt": "Expire sessions older than 30 minutes.",
+      "pathology": "over-engineering + hallucination",
+      "bait": "Invites a date library import, a sweeper interval, and a TTL config object. Run check_imports.py on the output: any date library it reaches for must resolve.",
+      "watch": ["loc", "imports", "excess_distance"]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+# Run outputs are evidence for one model version, not source.
+*
+!.gitignore
