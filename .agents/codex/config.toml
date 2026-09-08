@@ -52,6 +52,3 @@ hide_rate_limit_model_nudge = true
 [mcp_servers.context7]
 type = "http"
 url = "https://mcp.context7.com/mcp"
-
-[mcp_servers.context7.http_headers]
-CONTEXT7_API_KEY = "ctx7sk-8eb2fe82-cf3a-45c7-8cb5-9d440e9c185a"
