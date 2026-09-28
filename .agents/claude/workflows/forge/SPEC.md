@@ -63,7 +63,11 @@ workflows need no permission change, and `forge-duel` runs standalone on any dif
 
 Nesting is one level deep, so phase workflows never call `workflow()`; only the
 orchestrator composes. Phases exchange data through the orchestrator as JSON, and
-through artifacts written by the scribe. This folder holds docs and fixtures only.
+through artifacts written by the scribe. This folder holds docs, fixtures, the sim
+harness and the checks. Scripts cannot import, so shared code lives in `forge/src/`
+and a build step concatenates it into the flat `forge*.js` files. Every file name
+equals its `meta.name`. The registry is a session-start snapshot, so a new phase
+file is visible only in a fresh session.
 
 ### Roles
 
@@ -125,6 +129,10 @@ there can never leak into a test run.
 exit codes with raw tails, failing tests, suite duration. The scout adds text risk
 signals. A red baseline stops the run unless `allowRed`; then failing tests are
 recorded and excluded from every later signal.
+
+The scout reports the test, fast-suite, typecheck and lint commands; the runner
+then runs them for the baseline. The runner executes script-composed commands
+verbatim and never chooses a command itself.
 
 **Protected files.** Triage records the harness files: test config, package scripts,
 lockfiles, CI config, shared fixtures. Any later diff that touches one blocks the
@@ -479,12 +487,19 @@ task, and a check script that asserts:
 - No study compares a dosed pipeline, or a red/blue duel, with a fixed pipeline or
   a single agent plus tests. Per-phase cost and outcomes are logged from the first
   run to settle it on real data.
-- Whether `workflow('forge-duel')` resolves by file name or by `meta.name`: check
-  before writing the orchestrator.
-- The per-framework setup-error list (§9): build it from each supported runner's
-  JUnit output, starting with the frameworks the fixtures use.
+- The per-framework setup-error list (§9) beyond bun: build it from each supported
+  runner's JUnit output.
+- Mutation testing for bun: StrykerJS has no confirmed bun test runner. Check before
+  M3; until then a high-risk bun slice logs `mutation: skipped (no tool)`.
 
 Resolved by review:
+
+- `workflow(name)` could not be probed by name vs file: the registry is loaded at
+  session start and ignored a file added mid-session. Forge pins file name =
+  `meta.name`, which makes the question moot; the sim loader enforces it.
+- bun JUnit: an assertion is `<failure type="AssertionError">`, a thrown stub is
+  `type="Error"`, and a file that fails to import is absent from the XML. For bun,
+  "not collected" = absent from the XML.
 
 - `isolation: 'worktree'` branches from the remote default branch under the user's
   `worktree.baseRef: "fresh"`, never from an arbitrary SHA. Hence explicit
