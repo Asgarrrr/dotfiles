@@ -1,0 +1,6 @@
+{
+  "tests": [
+    { "clause": "S1.1", "file": "src/export.test.ts", "name": "admin receives the CSV report", "lines": [4, 6] },
+    { "clause": "S1.2", "file": "src/export.test.ts", "name": "S1.2 a member is refused with 403 and no body", "lines": [8, 10] }
+  ]
+}

@@ -81,3 +81,36 @@ describe('slugify fixture', () => {
     expect(r['b1 v2: words join with underscores, again']).toBe('fail')
   })
 })
+
+describe('export fixture', () => {
+  test('at A the negative clause fails and the preserve clause passes', () => {
+    const repo = makeRepo('app'); apply(repo, 'export', 'A')
+    const r = junit(repo)
+    expect(r['S1.2 a member is refused with 403 and no body']).toBe('fail')
+    expect(r['admin receives the CSV report']).toBe('pass')
+  })
+
+  test('at B every test passes', () => {
+    const repo = makeRepo('app'); apply(repo, 'export', 'A', 'B')
+    const r = junit(repo)
+    expect(Object.keys(r).length).toBeGreaterThan(0)
+    expect(Object.values(r).every(v => v === 'pass')).toBe(true)
+  })
+
+  test('plan and shadow disagree on the member status, and compare pairs them as differs', () => {
+    const read = f => JSON.parse(readFileSync(join(SIM_DIR, 'export', f), 'utf8'))
+    const plan = read('plan.json'), shadow = read('shadow.json'), compare = read('compare.json')
+    const s12 = plan.slices[0].spec.find(c => c.id === 'S1.2')
+    const h1 = shadow.clauses.find(c => c.id === 'H1')
+    expect(s12.expected).toContain('403')
+    expect(h1.expected).toContain('404')
+    expect(compare.pairs).toEqual([{ planner_clause: 'S1.2', shadow_clause: 'H1', verdict: 'differs' }])
+    expect(read('scout.json').signals.map(s => s.id)).toContain('auth')
+  })
+
+  test('builder-A.json line ranges point at the named tests', () => {
+    const map = JSON.parse(readFileSync(join(SIM_DIR, 'export', 'builder-A.json'), 'utf8'))
+    const lines = readFileSync(join(SIM_DIR, 'export', 'A', 'src', 'export.test.ts'), 'utf8').split('\n')
+    for (const t of map.tests) expect(lines[t.lines[0] - 1]).toContain(t.name)
+  })
+})

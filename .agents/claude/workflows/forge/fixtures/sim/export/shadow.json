@@ -1,0 +1,1 @@
+{ "clauses": [{ "id": "H1", "kind": "negative", "input": "a user with role 'member'", "action": "exportReport(user)", "expected": "status 404, no body", "signal": "auth" }] }
