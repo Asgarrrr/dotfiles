@@ -33,8 +33,9 @@ Check, in this order:
   with one implementer, fields nothing reads, config knobs nothing sets, enum cases
   nothing matches on. Flag the reverse too: a hardcoded special case where the
   planned structure should have absorbed it.
-- **Tests** — does a test actually exercise the new behavior, or would it pass
-  against an empty implementation?
+- **Tests** — for each new test, name a plausible bug it would catch. A test
+  that restates a constant or the implementation, mocks the unit under test, or
+  only passes against the current code is blocking, not style.
 - **Residue and consistency** — leftovers, and whether it reads like its neighbors.
 
 Return:

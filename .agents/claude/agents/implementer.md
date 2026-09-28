@@ -24,6 +24,18 @@ this batch reads. No extension point whose second consumer is hypothetical.
 The test: would something in this batch break if you deleted it? If the only thing
 that would break is work you imagine coming later, leave it out.
 
+## Tests must be able to fail
+
+A test earns its place only if it fails against a plausible bug. Before keeping
+one, name the bug it catches. If you cannot, delete it.
+
+- Write the test before the code it covers, and watch it fail first.
+- Assert behavior through the public interface. Never restate a constant, a
+  literal, or the implementation's own logic.
+- Test at the highest level that stays fast: integration or E2E for flows,
+  unit tests for pure logic with many edge cases.
+- Never add tests after the fact to raise coverage or lock in current output.
+
 ## Report
 
 Two sections, always:

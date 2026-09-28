@@ -5,6 +5,7 @@
 1. Every non-trivial task starts with an executable success criterion — a
    failing test, or a script with expected output — written BEFORE the
    implementation. Task arrives without one → propose one, then build.
+   A test that still passes with a plausible bug injected is not a criterion.
 2. Run the project's real build / typecheck / lint / test commands AND
    exercise the behavior (test, integration run, or manual run with logs).
 3. Builder ≠ verifier: diff touches ≥3 files or exceeds 100 lines → run
