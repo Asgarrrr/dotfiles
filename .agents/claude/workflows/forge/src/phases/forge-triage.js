@@ -7,7 +7,7 @@ export const meta = {
 const SCOUT_PROMPT =
   'You are the forge scout. Read the repository at FORGE_CTX.dir to prepare this task: FORGE_CTX.task. ' +
   'Report facts, never verdicts: the files the task likely touches, reusable helpers, conventions, and ' +
-  'the exact commands for the test suite, a fast subset, typecheck and lint (null if absent). ' +
+  'the exact commands to install dependencies, run the test suite, a fast subset, typecheck and lint (null if absent). ' +
   'List every risk signal, each with its `file:line`, or "task" when only the task text implies it: ' +
   'persistence, auth, money, concurrency, untrusted-input, public-api, data-loss.'
 
@@ -31,6 +31,7 @@ return await guard(out, async () => {
   out.scout = scout
   const testCmd = scout.commands && scout.commands.test
   if (!testCmd) stop('escalated', 'scout found no test command')
+  if (scout.commands.install) await runOk('triage:install', [{ cmd: scout.commands.install, cwd: P.main, tail: 3000 }])
 
   const [ls] = await runOk('triage:files', [{ cmd: 'git ls-files', cwd: P.main, tail: 400000 }])
   const protectedFiles = ls.tail.split('\n').filter(isProtected)

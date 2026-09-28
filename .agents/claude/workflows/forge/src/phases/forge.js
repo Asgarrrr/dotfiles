@@ -17,7 +17,11 @@ const ledger = []
 let P = null
 let runRec = null
 
-const finish = (s, extra = {}) => ({ runId: A.runId, runDir: P ? P.runDir : null, ...s, ...extra })
+// A slice that failed after its attempts escalates the run (SPEC §9); `failed`
+// stays on the slice record, not in the result contract.
+const finish = (s, extra = {}) => ({
+  runId: A.runId, runDir: P ? P.runDir : null, ...s, status: s.status === 'failed' ? 'escalated' : s.status, ...extra,
+})
 
 // The orchestrator is the only writer (SPEC §2.5): one scribe call per phase boundary.
 async function save(label, files) {
@@ -27,11 +31,18 @@ async function save(label, files) {
   await persist(label, writes)
 }
 
-async function step(name, childArgs) {
+// headOf reads the newest commit a phase made, so a stop line carries the SHA the
+// branch is actually at.
+async function step(name, childArgs, headOf) {
   const res = await workflow(name, childArgs)
   if (!res) stop('error', `${name} returned nothing`)
   ledger.push(...(res.ledger || []))
-  if (res.stop) ledger.push(ledgerLine(res.stop.status === 'error' ? 'error' : 'failed', res.stop.reason, runRec && runRec.lastSha))
+  const head = headOf && headOf(res)
+  if (head && runRec) runRec.lastSha = head
+  if (res.stop) {
+    if (runRec) runRec.status = res.stop.status
+    ledger.push(ledgerLine(res.stop.status === 'error' ? 'error' : 'failed', res.stop.reason, runRec && runRec.lastSha))
+  }
   return res
 }
 
@@ -56,6 +67,7 @@ try {
   await save('triage', { 'run.json': runRec, ...(tri.triage ? { 'triage.json': tri.triage } : {}), ...(tri.scout ? { 'scout.json': tri.scout } : {}) })
   if (tri.stop) return finish(tri.stop)
   const commands = tri.triage.commands
+  const baselineFailing = tri.triage.baseline.failing
   let dose = dosing(runRec.tier, runRec.risk)
   const why = runRec.signals.map(s => `${s.id}: ${s.where}`).join(', ')
   log(`${runRec.tier} · ${runRec.risk}${why ? ` (${why})` : ''} · ${dose.council ? 'council + ' : ''}plan · ${dose.attackers.length} attacker(s)`)
@@ -83,17 +95,15 @@ try {
   const records = []
   for (const slice of plan.slices.slice(0, until)) {
     phase('Build')
-    const b = await step('forge-build', { slice, paths: P, testCmd: commands.test })
+    const b = await step('forge-build', { slice, paths: P, testCmd: commands.test, head: runRec.lastSha, baselineFailing }, r => r.slice.commits.B || r.slice.commits.A)
     if (b.stop) b.slice.status = sliceStatus(b.stop)
-    if (b.slice.commits.B) runRec.lastSha = b.slice.commits.B
     runRec.phase = `build:${slice.id}`
     await save(`build-${slice.id}`, { 'run.json': runRec, [`slices/${slice.id}.json`]: b.slice })
     if (b.stop) return finish(b.stop)
 
     phase('Duel')
-    const d = await step('forge-duel', { slice, record: b.slice, paths: P, runId: A.runId, testCmd: commands.test, attackers: dose.attackers, mutation: dose.mutation, round: 1 })
+    const d = await step('forge-duel', { slice, record: b.slice, paths: P, runId: A.runId, testCmd: commands.test, install: commands.install || null, attackers: dose.attackers, mutation: dose.mutation, round: 1, baselineFailing }, r => r.head)
     d.slice.status = d.stop ? sliceStatus(d.stop) : 'done'
-    if (d.head) runRec.lastSha = d.head
     runRec.phase = `duel:${slice.id}`
     await save(`duel-${slice.id}`, { 'run.json': runRec, [`slices/${slice.id}.json`]: d.slice })
     if (d.stop) return finish(d.stop)
@@ -101,7 +111,7 @@ try {
   }
 
   phase('Close')
-  const c = await step('forge-close', { paths: P, commands, base: runRec.base, records, plan, dismissed, signals: runRec.signals })
+  const c = await step('forge-close', { paths: P, commands, base: runRec.base, records, plan, dismissed, signals: runRec.signals, baselineFailing })
   runRec.phase = 'close'
   runRec.status = c.stop ? c.stop.status : 'done'
   await save('close', { 'run.json': runRec, ...(c.report ? { 'report.md': c.report } : {}) })

@@ -2,8 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import {
   sha256, parseJunit, outcomes, checkPlan, sizeOf, riskOf, raiseTier, dosing,
-  parsePorcelain, isProtected, q, ledgerLine, paths, junitCommand, parseDismiss,
+  parsePorcelain, isProtected, q, ledgerLine, paths, junitCommand, parseDismiss, suiteCommand, suiteOk,
 } from './lib.js'
+import { spawnSync } from 'node:child_process'
 
 const nodeSha = s => createHash('sha256').update(s, 'utf8').digest('hex')
 
@@ -151,5 +152,28 @@ describe('git and shell helpers', () => {
   test('junitCommand supports bun test and refuses what it cannot parse', () => {
     expect(junitCommand('bun test', '/o/x.xml')).toBe(`bun test --reporter=junit --reporter-outfile='/o/x.xml'`)
     expect(junitCommand('npm test', '/o/x.xml')).toBeNull()
+  })
+})
+
+describe('suite helpers', () => {
+  // The Bash tool runs the user's shell. zsh has no PIPESTATUS, so `cmd | tail`
+  // would report tail's exit 0 for a failing suite.
+  for (const shell of ['zsh', 'bash']) {
+    test(`suiteCommand keeps the suite exit code under ${shell}`, () => {
+      const r = spawnSync(shell, ['-c', suiteCommand('echo out; exit 3', '/tmp/forge-suite-test.log')], { encoding: 'utf8' })
+      expect(r.status).toBe(3)
+      expect(r.stdout).toContain('out')
+    })
+  }
+
+  const cases = [{ name: 'a', file: 'x', outcome: 'fail' }, { name: 'b', file: 'x', outcome: 'pass' }]
+  test('suiteOk tolerates only failures already red at baseline', () => {
+    expect(suiteOk({ exit: 1, cases }, ['x › a'])).toBe(true)
+    expect(suiteOk({ exit: 1, cases }, [])).toBe(false)
+    expect(suiteOk({ exit: 0, cases: [cases[1]] }, [])).toBe(true)
+  })
+
+  test('suiteOk refuses a non-zero exit with no failing case on a green baseline', () => {
+    expect(suiteOk({ exit: 1, cases: [cases[1]] }, [])).toBe(false)
   })
 })

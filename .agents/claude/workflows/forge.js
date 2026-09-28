@@ -41,6 +41,8 @@ function utf8Bytes(str) {
 
 const rotr = (x, n) => (x >>> n) | (x << (32 - n))
 
+const byteLength = str => utf8Bytes(str).length
+
 function sha256(str) {
   const bytes = utf8Bytes(str)
   const bitLen = bytes.length * 8
@@ -240,6 +242,19 @@ function ledgerLine(kind, text, sha) {
   return `[${kind}] ${text}${sha ? ` @${String(sha).slice(0, 7)}` : ''}`
 }
 
+// No pipe: zsh (the Bash tool's shell here) has no PIPESTATUS, so `suite | tail`
+// would report tail's exit code and every suite would read as green.
+const suiteCommand = (cmd, logFile) => `( ${cmd} ) > ${q(logFile)} 2>&1; e=$?; tail -c 3000 ${q(logFile)}; exit $e`
+
+// A run is green when it fails nothing that was not already failing at baseline.
+// On a green baseline the exit code must also be 0: an import error removes a
+// whole file from the report without adding a failing case.
+function suiteOk(res, baselineFailing = []) {
+  const known = new Set(baselineFailing)
+  const fresh = res.cases.filter(c => c.outcome === 'fail' && !known.has(`${c.file} › ${c.name}`))
+  return fresh.length === 0 && (known.size > 0 || res.exit === 0)
+}
+
 // Helpers that spawn agents. They use the workflow runtime's `agent` global, so
 // they are tested through the scenario checks, not in isolation.
 
@@ -307,14 +322,24 @@ async function commit(label, cwd, message, { amend = false } = {}) {
   return shaOf(head.tail)
 }
 
-async function changedFiles(label, cwd) {
-  const [r] = await runOk(label, [{ cmd: 'git status --porcelain=v1 -uall', cwd, tail: 100000 }])
-  return parsePorcelain(r.tail)
+// An agent told not to commit may commit anyway; a clean tree would then hide its
+// edits from porcelain. HEAD must still be where the script left it.
+async function protectedChanges(label, cwd, expectedHead) {
+  const [head, status] = await runOk(label, [
+    { cmd: 'git rev-parse HEAD', cwd },
+    { cmd: 'git status --porcelain=v1 -uall', cwd, tail: 100000 },
+  ])
+  const now = shaOf(head.tail)
+  if (now !== expectedHead) stop('blocked', `${label}: the agent committed on its own (HEAD ${now.slice(0, 7)}, expected ${expectedHead.slice(0, 7)})`)
+  const changed = parsePorcelain(status.tail)
+  return { changed, touched: changed.filter(isProtected) }
 }
 
-async function protectedChanges(label, cwd) {
-  const changed = await changedFiles(label, cwd)
-  return { changed, touched: changed.filter(isProtected) }
+// Files changed between two commits, limited to `files` — the tamper check.
+async function editedBetween(label, cwd, from, to, files) {
+  if (!files.length) return []
+  const [r] = await runOk(label, [{ cmd: `git diff --name-only ${from} ${to} -- ${files.map(q).join(' ')}`, cwd, tail: 100000 }])
+  return r.tail.split('\n').filter(Boolean)
 }
 
 // Runs the suite with a JUnit report. Only the tags are returned — a small surface
@@ -325,7 +350,7 @@ async function runTests(label, { cwd, testCmd, runDir }) {
   if (!jc) stop('escalated', `no JUnit adapter yet for the test command "${testCmd}"`)
   const [clean, suite, report] = await run(`test:${label}`, [
     { cmd: 'test -z "$(git status --porcelain)"', cwd },
-    { cmd: `mkdir -p ${q(`${runDir}/junit`)} && rm -f ${q(out)} && ${jc} 2>&1 | tail -c 3000; exit \${PIPESTATUS[0]}`, cwd, tail: 3000 },
+    { cmd: `mkdir -p ${q(`${runDir}/junit`)} && rm -f ${q(out)} && ${suiteCommand(jc, `${runDir}/junit/${label}.log`)}`, cwd, tail: 3000 },
     { cmd: `grep -oE '<testcase [^>]*>|</testcase>|<(failure|error) type="[^"]*"|<skipped' ${q(out)}`, cwd, tail: 400000 },
   ])
   if (clean.exit !== 0) stop('blocked', `tree not clean before the test run in ${cwd}`)
@@ -355,6 +380,15 @@ async function persist(label, writes) {
     const f = got.get(w.path)
     if (!f || f.sha256 !== sha256(w.content)) stop('error', `write-hash-mismatch: ${w.path}`)
   }
+  // The scribe could hash the content without writing it. The runner, a separate
+  // agent, reads the file back from disk.
+  const checks = await run(`verify:${label}`, list.map(w => ({ cmd: `shasum -a 256 ${q(w.path)} && wc -c < ${q(w.path)}`, cwd: '/' })))
+  list.forEach((w, i) => {
+    const [hash, bytes] = [checks[i].tail.match(/\b[0-9a-f]{64}\b/), checks[i].tail.trim().split(/\s+/).pop()]
+    if (checks[i].exit !== 0 || !hash || hash[0] !== sha256(w.content) || Number(bytes) !== byteLength(w.content)) {
+      stop('error', `write-hash-mismatch on disk: ${w.path}`)
+    }
+  })
 }
 
 // ---------- judge ----------
@@ -362,25 +396,27 @@ async function persist(label, writes) {
 const JUDGE_PROMPT =
   'You are the forge judge. Each item in FORGE_CTX.items pairs a spec clause with a test that claims ' +
   'to check it. You see no implementation, on purpose; do not look for one and do not use tools. ' +
-  'For each item return one verdict:\n' +
+  'For each item return one verdict, keyed by the item\'s `ref`:\n' +
   '- valid: the test fails for any implementation that violates the clause and passes for one that meets it.\n' +
   '- too_weak: a wrong implementation could still pass (e.g. the clause expects 401, the test asserts only "not 200").\n' +
   '- overreach: the test demands behavior the clause does not state.\n' +
   '- wrong_oracle: the expected value contradicts the clause.'
 const JUDGE_SCHEMA = obj({
-  verdicts: arr(obj({ test: str, verdict: { type: 'string', enum: ['valid', 'too_weak', 'overreach', 'wrong_oracle'] } })),
+  verdicts: arr(obj({ ref: str, verdict: { type: 'string', enum: ['valid', 'too_weak', 'overreach', 'wrong_oracle'] } })),
 })
 
 const clauseView = c => ({ id: c.id, kind: c.kind, input: c.input, action: c.action, expected: c.expected })
 
 // Returns one verdict per item, in order; an item the judge skipped is 'missing'.
-async function judge(label, items) {
+// Verdicts bind to a ref, not a test name: two items may share a name.
+async function judge(label, list) {
+  const items = list.map((item, i) => ({ ref: String(i + 1), ...item }))
   const r = await agent(withCtx(JUDGE_PROMPT, { items }), {
     label: `judge:${label}`, model: 'opus', effort: 'medium', schema: JUDGE_SCHEMA,
   })
   const verdicts = (r && r.verdicts) || []
   return items.map(i => {
-    const v = verdicts.find(x => x.test === i.test)
+    const v = verdicts.find(x => x.ref === i.ref)
     return v ? v.verdict : 'missing'
   })
 }
@@ -391,7 +427,7 @@ const clauseSchema = obj({ id: str, kind: str, input: str, action: str, expected
 const SCOUT_SCHEMA = obj({
   files: arr(str), helpers: arr(str), conventions: str,
   signals: arr(obj({ id: { type: 'string', enum: ['persistence', 'auth', 'money', 'concurrency', 'untrusted-input', 'public-api', 'data-loss'] }, where: str })),
-  commands: obj({ test: str, fast: str, typecheck: { type: ['string', 'null'] }, lint: { type: ['string', 'null'] } }),
+  commands: obj({ install: { type: ['string', 'null'] }, test: str, fast: str, typecheck: { type: ['string', 'null'] }, lint: { type: ['string', 'null'] } }),
 })
 const PLAN_SCHEMA = obj({
   slices: arr(obj({
@@ -422,7 +458,11 @@ const ledger = []
 let P = null
 let runRec = null
 
-const finish = (s, extra = {}) => ({ runId: A.runId, runDir: P ? P.runDir : null, ...s, ...extra })
+// A slice that failed after its attempts escalates the run (SPEC §9); `failed`
+// stays on the slice record, not in the result contract.
+const finish = (s, extra = {}) => ({
+  runId: A.runId, runDir: P ? P.runDir : null, ...s, status: s.status === 'failed' ? 'escalated' : s.status, ...extra,
+})
 
 // The orchestrator is the only writer (SPEC §2.5): one scribe call per phase boundary.
 async function save(label, files) {
@@ -432,11 +472,18 @@ async function save(label, files) {
   await persist(label, writes)
 }
 
-async function step(name, childArgs) {
+// headOf reads the newest commit a phase made, so a stop line carries the SHA the
+// branch is actually at.
+async function step(name, childArgs, headOf) {
   const res = await workflow(name, childArgs)
   if (!res) stop('error', `${name} returned nothing`)
   ledger.push(...(res.ledger || []))
-  if (res.stop) ledger.push(ledgerLine(res.stop.status === 'error' ? 'error' : 'failed', res.stop.reason, runRec && runRec.lastSha))
+  const head = headOf && headOf(res)
+  if (head && runRec) runRec.lastSha = head
+  if (res.stop) {
+    if (runRec) runRec.status = res.stop.status
+    ledger.push(ledgerLine(res.stop.status === 'error' ? 'error' : 'failed', res.stop.reason, runRec && runRec.lastSha))
+  }
   return res
 }
 
@@ -461,6 +508,7 @@ try {
   await save('triage', { 'run.json': runRec, ...(tri.triage ? { 'triage.json': tri.triage } : {}), ...(tri.scout ? { 'scout.json': tri.scout } : {}) })
   if (tri.stop) return finish(tri.stop)
   const commands = tri.triage.commands
+  const baselineFailing = tri.triage.baseline.failing
   let dose = dosing(runRec.tier, runRec.risk)
   const why = runRec.signals.map(s => `${s.id}: ${s.where}`).join(', ')
   log(`${runRec.tier} · ${runRec.risk}${why ? ` (${why})` : ''} · ${dose.council ? 'council + ' : ''}plan · ${dose.attackers.length} attacker(s)`)
@@ -488,17 +536,15 @@ try {
   const records = []
   for (const slice of plan.slices.slice(0, until)) {
     phase('Build')
-    const b = await step('forge-build', { slice, paths: P, testCmd: commands.test })
+    const b = await step('forge-build', { slice, paths: P, testCmd: commands.test, head: runRec.lastSha, baselineFailing }, r => r.slice.commits.B || r.slice.commits.A)
     if (b.stop) b.slice.status = sliceStatus(b.stop)
-    if (b.slice.commits.B) runRec.lastSha = b.slice.commits.B
     runRec.phase = `build:${slice.id}`
     await save(`build-${slice.id}`, { 'run.json': runRec, [`slices/${slice.id}.json`]: b.slice })
     if (b.stop) return finish(b.stop)
 
     phase('Duel')
-    const d = await step('forge-duel', { slice, record: b.slice, paths: P, runId: A.runId, testCmd: commands.test, attackers: dose.attackers, mutation: dose.mutation, round: 1 })
+    const d = await step('forge-duel', { slice, record: b.slice, paths: P, runId: A.runId, testCmd: commands.test, install: commands.install || null, attackers: dose.attackers, mutation: dose.mutation, round: 1, baselineFailing }, r => r.head)
     d.slice.status = d.stop ? sliceStatus(d.stop) : 'done'
-    if (d.head) runRec.lastSha = d.head
     runRec.phase = `duel:${slice.id}`
     await save(`duel-${slice.id}`, { 'run.json': runRec, [`slices/${slice.id}.json`]: d.slice })
     if (d.stop) return finish(d.stop)
@@ -506,7 +552,7 @@ try {
   }
 
   phase('Close')
-  const c = await step('forge-close', { paths: P, commands, base: runRec.base, records, plan, dismissed, signals: runRec.signals })
+  const c = await step('forge-close', { paths: P, commands, base: runRec.base, records, plan, dismissed, signals: runRec.signals, baselineFailing })
   runRec.phase = 'close'
   runRec.status = c.stop ? c.stop.status : 'done'
   await save('close', { 'run.json': runRec, ...(c.report ? { 'report.md': c.report } : {}) })

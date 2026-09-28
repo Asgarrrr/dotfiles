@@ -21,7 +21,8 @@ export function runCommands(commands) {
     results: commands.map(({ cmd, cwd, tail = DEFAULT_TAIL }) => {
       // Without a cwd, spawnSync runs in the harness package: real exit codes, wrong tree.
       if (!cwd) throw new Error(`runner command has no cwd: ${cmd}`)
-      const r = spawnSync('bash', ['-c', cmd], { cwd, encoding: 'utf8' })
+      // zsh: the Bash tool runs the user's shell, and bash-only syntax must fail here too.
+      const r = spawnSync('zsh', ['-c', cmd], { cwd, encoding: 'utf8' })
       return { cmd, exit: r.status ?? -1, tail: ((r.stdout || '') + (r.stderr || '')).slice(-tail) }
     }),
   }
@@ -70,7 +71,7 @@ export function simAgents(simName, overrides = {}) {
       copyInto(ctx.stage, ctx.worktree)
       return ctx.stage === 'A' ? json('builder-A.json') : { done: true }
     },
-    judge: ctx => ({ verdicts: ctx.items.map(i => ({ test: i.test, verdict: 'valid' })) }),
+    judge: ctx => ({ verdicts: ctx.items.map(i => ({ ref: i.ref, verdict: 'valid' })) }),
     red: () => ({ bugs: [] }),
     blue: ctx => ({ results: ctx.bugs.map(b => ({ bug: b.id, outcome: 'reject', clause: b.clause })) }),
     reviewer: () => ({ findings: [] }),

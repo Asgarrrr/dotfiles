@@ -33,6 +33,8 @@ function utf8Bytes(str) {
 
 const rotr = (x, n) => (x >>> n) | (x << (32 - n))
 
+const byteLength = str => utf8Bytes(str).length
+
 function sha256(str) {
   const bytes = utf8Bytes(str)
   const bitLen = bytes.length * 8
@@ -232,6 +234,19 @@ function ledgerLine(kind, text, sha) {
   return `[${kind}] ${text}${sha ? ` @${String(sha).slice(0, 7)}` : ''}`
 }
 
+// No pipe: zsh (the Bash tool's shell here) has no PIPESTATUS, so `suite | tail`
+// would report tail's exit code and every suite would read as green.
+const suiteCommand = (cmd, logFile) => `( ${cmd} ) > ${q(logFile)} 2>&1; e=$?; tail -c 3000 ${q(logFile)}; exit $e`
+
+// A run is green when it fails nothing that was not already failing at baseline.
+// On a green baseline the exit code must also be 0: an import error removes a
+// whole file from the report without adding a failing case.
+function suiteOk(res, baselineFailing = []) {
+  const known = new Set(baselineFailing)
+  const fresh = res.cases.filter(c => c.outcome === 'fail' && !known.has(`${c.file} › ${c.name}`))
+  return fresh.length === 0 && (known.size > 0 || res.exit === 0)
+}
+
 // Helpers that spawn agents. They use the workflow runtime's `agent` global, so
 // they are tested through the scenario checks, not in isolation.
 
@@ -299,14 +314,24 @@ async function commit(label, cwd, message, { amend = false } = {}) {
   return shaOf(head.tail)
 }
 
-async function changedFiles(label, cwd) {
-  const [r] = await runOk(label, [{ cmd: 'git status --porcelain=v1 -uall', cwd, tail: 100000 }])
-  return parsePorcelain(r.tail)
+// An agent told not to commit may commit anyway; a clean tree would then hide its
+// edits from porcelain. HEAD must still be where the script left it.
+async function protectedChanges(label, cwd, expectedHead) {
+  const [head, status] = await runOk(label, [
+    { cmd: 'git rev-parse HEAD', cwd },
+    { cmd: 'git status --porcelain=v1 -uall', cwd, tail: 100000 },
+  ])
+  const now = shaOf(head.tail)
+  if (now !== expectedHead) stop('blocked', `${label}: the agent committed on its own (HEAD ${now.slice(0, 7)}, expected ${expectedHead.slice(0, 7)})`)
+  const changed = parsePorcelain(status.tail)
+  return { changed, touched: changed.filter(isProtected) }
 }
 
-async function protectedChanges(label, cwd) {
-  const changed = await changedFiles(label, cwd)
-  return { changed, touched: changed.filter(isProtected) }
+// Files changed between two commits, limited to `files` — the tamper check.
+async function editedBetween(label, cwd, from, to, files) {
+  if (!files.length) return []
+  const [r] = await runOk(label, [{ cmd: `git diff --name-only ${from} ${to} -- ${files.map(q).join(' ')}`, cwd, tail: 100000 }])
+  return r.tail.split('\n').filter(Boolean)
 }
 
 // Runs the suite with a JUnit report. Only the tags are returned — a small surface
@@ -317,7 +342,7 @@ async function runTests(label, { cwd, testCmd, runDir }) {
   if (!jc) stop('escalated', `no JUnit adapter yet for the test command "${testCmd}"`)
   const [clean, suite, report] = await run(`test:${label}`, [
     { cmd: 'test -z "$(git status --porcelain)"', cwd },
-    { cmd: `mkdir -p ${q(`${runDir}/junit`)} && rm -f ${q(out)} && ${jc} 2>&1 | tail -c 3000; exit \${PIPESTATUS[0]}`, cwd, tail: 3000 },
+    { cmd: `mkdir -p ${q(`${runDir}/junit`)} && rm -f ${q(out)} && ${suiteCommand(jc, `${runDir}/junit/${label}.log`)}`, cwd, tail: 3000 },
     { cmd: `grep -oE '<testcase [^>]*>|</testcase>|<(failure|error) type="[^"]*"|<skipped' ${q(out)}`, cwd, tail: 400000 },
   ])
   if (clean.exit !== 0) stop('blocked', `tree not clean before the test run in ${cwd}`)
@@ -347,6 +372,15 @@ async function persist(label, writes) {
     const f = got.get(w.path)
     if (!f || f.sha256 !== sha256(w.content)) stop('error', `write-hash-mismatch: ${w.path}`)
   }
+  // The scribe could hash the content without writing it. The runner, a separate
+  // agent, reads the file back from disk.
+  const checks = await run(`verify:${label}`, list.map(w => ({ cmd: `shasum -a 256 ${q(w.path)} && wc -c < ${q(w.path)}`, cwd: '/' })))
+  list.forEach((w, i) => {
+    const [hash, bytes] = [checks[i].tail.match(/\b[0-9a-f]{64}\b/), checks[i].tail.trim().split(/\s+/).pop()]
+    if (checks[i].exit !== 0 || !hash || hash[0] !== sha256(w.content) || Number(bytes) !== byteLength(w.content)) {
+      stop('error', `write-hash-mismatch on disk: ${w.path}`)
+    }
+  })
 }
 
 // ---------- judge ----------
@@ -354,25 +388,27 @@ async function persist(label, writes) {
 const JUDGE_PROMPT =
   'You are the forge judge. Each item in FORGE_CTX.items pairs a spec clause with a test that claims ' +
   'to check it. You see no implementation, on purpose; do not look for one and do not use tools. ' +
-  'For each item return one verdict:\n' +
+  'For each item return one verdict, keyed by the item\'s `ref`:\n' +
   '- valid: the test fails for any implementation that violates the clause and passes for one that meets it.\n' +
   '- too_weak: a wrong implementation could still pass (e.g. the clause expects 401, the test asserts only "not 200").\n' +
   '- overreach: the test demands behavior the clause does not state.\n' +
   '- wrong_oracle: the expected value contradicts the clause.'
 const JUDGE_SCHEMA = obj({
-  verdicts: arr(obj({ test: str, verdict: { type: 'string', enum: ['valid', 'too_weak', 'overreach', 'wrong_oracle'] } })),
+  verdicts: arr(obj({ ref: str, verdict: { type: 'string', enum: ['valid', 'too_weak', 'overreach', 'wrong_oracle'] } })),
 })
 
 const clauseView = c => ({ id: c.id, kind: c.kind, input: c.input, action: c.action, expected: c.expected })
 
 // Returns one verdict per item, in order; an item the judge skipped is 'missing'.
-async function judge(label, items) {
+// Verdicts bind to a ref, not a test name: two items may share a name.
+async function judge(label, list) {
+  const items = list.map((item, i) => ({ ref: String(i + 1), ...item }))
   const r = await agent(withCtx(JUDGE_PROMPT, { items }), {
     label: `judge:${label}`, model: 'opus', effort: 'medium', schema: JUDGE_SCHEMA,
   })
   const verdicts = (r && r.verdicts) || []
   return items.map(i => {
-    const v = verdicts.find(x => x.test === i.test)
+    const v = verdicts.find(x => x.ref === i.ref)
     return v ? v.verdict : 'missing'
   })
 }
@@ -383,7 +419,7 @@ const clauseSchema = obj({ id: str, kind: str, input: str, action: str, expected
 const SCOUT_SCHEMA = obj({
   files: arr(str), helpers: arr(str), conventions: str,
   signals: arr(obj({ id: { type: 'string', enum: ['persistence', 'auth', 'money', 'concurrency', 'untrusted-input', 'public-api', 'data-loss'] }, where: str })),
-  commands: obj({ test: str, fast: str, typecheck: { type: ['string', 'null'] }, lint: { type: ['string', 'null'] } }),
+  commands: obj({ install: { type: ['string', 'null'] }, test: str, fast: str, typecheck: { type: ['string', 'null'] }, lint: { type: ['string', 'null'] } }),
 })
 const PLAN_SCHEMA = obj({
   slices: arr(obj({

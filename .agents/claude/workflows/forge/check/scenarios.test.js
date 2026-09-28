@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test'
 import { execSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { runForge } from '../harness/run.js'
-import { lyingScribe } from '../harness/fakes.js'
+import { makeRepo } from '../harness/repo.js'
+import { lyingScribe, sha256 } from '../harness/fakes.js'
 
 const T = 120_000
 const ofRole = (calls, role) => calls.filter(c => c.role === role)
@@ -55,7 +56,7 @@ test('2 · a too_weak builder test goes back to the builder once; the judge neve
     judge: ctx => {
       judged++
       return { verdicts: ctx.items.map(i => ({
-        test: i.test,
+        ref: i.ref,
         verdict: judged === 1 && i.clause.id === 'S1.1' ? 'too_weak' : 'valid',
       })) }
     },
@@ -72,7 +73,7 @@ test('2 · a too_weak builder test goes back to the builder once; the judge neve
 test('3 · a red test with a wrong oracle is rejected by the judge and never lands', async () => {
   const r = await runForge({ sim: 'slugify', overrides: {
     red: (ctx, h) => { h.copyInto('red-restating', ctx.worktree); return h.json('red-restating.json') },
-    judge: ctx => ({ verdicts: ctx.items.map(i => ({ test: i.test, verdict: i.test.startsWith('b1') ? 'wrong_oracle' : 'valid' })) }),
+    judge: ctx => ({ verdicts: ctx.items.map(i => ({ ref: i.ref, verdict: i.test.startsWith('b1') ? 'wrong_oracle' : 'valid' })) }),
   } })
   const bug = r.json('slices/S1.json').duel.rounds[0].bugs[0]
   expect(bug).toMatchObject({ id: 'b1', verdict: 'wrong_oracle', status: 'discarded' })
@@ -213,4 +214,74 @@ test('13 · a planted ambiguity surfaces as a question; no checkpoint shows more
   expect(many.result.status).toBe('checkpoint')
   expect(many.result.questions).toHaveLength(5)
   expect(many.result.underspecified).toBe(true)
+}, T)
+
+// ---- regressions beyond SPEC §14, from the M1 review ----
+
+const weaken = (worktree, file, from, to) => {
+  const path = join(worktree, file)
+  writeFileSync(path, readFileSync(path, 'utf8').replace(from, to))
+}
+
+test('14 · a builder that weakens a clause test at B is flagged as tamper', async () => {
+  const r = await runForge({ sim: 'slugify', overrides: {
+    builder: (ctx, h) => {
+      h.copyInto(ctx.stage === 'B' ? 'B-buggy' : 'A', ctx.worktree)
+      if (ctx.stage === 'B') weaken(ctx.worktree, 'src/text.test.ts', "toBe('hello')", 'toBeTruthy()')
+      return ctx.stage === 'A' ? h.json('builder-A.json') : { done: true }
+    },
+  } })
+  expect(r.json('slices/S1.json').status).toBe('blocked')
+  expect(r.ledger()).toMatch(/\[failed\] S1 .*tamper.*src\/text\.test\.ts/)
+}, T)
+
+test('15 · a blue fix that weakens a builder clause test is flagged as tamper', async () => {
+  const r = await runForge({ sim: 'slugify', overrides: { ...plantedBug, blue: (ctx, h) => {
+    weaken(ctx.worktree, 'src/text.test.ts', "toBe('hello')", 'toBeTruthy()')
+    return blueWith('blue-fix')(ctx, h)
+  } } })
+  expect(r.json('slices/S1.json').status).toBe('blocked')
+  expect(r.ledger()).toMatch(/\[failed\] S1 .*tamper.*src\/text\.test\.ts/)
+}, T)
+
+test('16 · an agent that commits on its own is blocked, even with a clean tree', async () => {
+  const r = await runForge({ sim: 'slugify', overrides: {
+    builder: (ctx, h) => {
+      h.copyInto(ctx.stage, ctx.worktree)
+      writeFileSync(join(ctx.worktree, 'package.json'), '{ "name": "forge-fixture", "type": "module" }\n')
+      execSync('git add -A && git commit -q -m sneaky', { cwd: ctx.worktree })
+      return ctx.stage === 'A' ? h.json('builder-A.json') : { done: true }
+    },
+  } })
+  expect(r.json('slices/S1.json').status).toBe('blocked')
+  expect(r.result.reason).toMatch(/committed/)
+}, T)
+
+test('17 · an attacker that returns nothing escalates instead of reporting no bug', async () => {
+  const r = await runForge({ sim: 'slugify', overrides: { red: () => null } })
+  expect(r.result.status).toBe('escalated')
+  expect(r.result.reason).toMatch(/attacker/)
+  expect(r.ledger()).not.toMatch(/no bug/)
+}, T)
+
+test('18 · allowRed runs on a red baseline and judges only new failures', async () => {
+  const redRepo = () => {
+    const repo = makeRepo('app')
+    writeFileSync(join(repo, 'src/legacy.test.ts'), "import { expect, test } from 'bun:test'\ntest('legacy is broken', () => { expect(1).toBe(2) })\n")
+    execSync('git add -A && git commit -q -m legacy', { cwd: repo })
+    return repo
+  }
+  const blocked = await runForge({ sim: 'slugify', repo: redRepo() })
+  expect(blocked.result).toMatchObject({ status: 'blocked' })
+  expect(blocked.result.reason).toMatch(/red baseline/)
+  const allowed = await runForge({ sim: 'slugify', repo: redRepo(), args: { allowRed: true } })
+  expect(allowed.result.status).toBe('done')
+}, T)
+
+test('19 · a scribe that hashes the content without writing it fails the on-disk check', async () => {
+  const hashingScribe = ({ writes = [] }) => ({ files: writes.map(({ path, content }) => ({ path, sha256: sha256(content), bytes: Buffer.byteLength(content) })) })
+  const r = await runForge({ sim: 'slugify', overrides: { scribe: hashingScribe } })
+  expect(r.result.status).toBe('error')
+  expect(r.result.reason).toMatch(/on disk/)
+  expect(ofRole(r.calls, 'builder')).toHaveLength(0)
 }, T)

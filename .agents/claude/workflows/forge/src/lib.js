@@ -28,6 +28,8 @@ function utf8Bytes(str) {
 
 const rotr = (x, n) => (x >>> n) | (x << (32 - n))
 
+export const byteLength = str => utf8Bytes(str).length
+
 export function sha256(str) {
   const bytes = utf8Bytes(str)
   const bitLen = bytes.length * 8
@@ -225,4 +227,17 @@ export function paths(dir, runId) {
 
 export function ledgerLine(kind, text, sha) {
   return `[${kind}] ${text}${sha ? ` @${String(sha).slice(0, 7)}` : ''}`
+}
+
+// No pipe: zsh (the Bash tool's shell here) has no PIPESTATUS, so `suite | tail`
+// would report tail's exit code and every suite would read as green.
+export const suiteCommand = (cmd, logFile) => `( ${cmd} ) > ${q(logFile)} 2>&1; e=$?; tail -c 3000 ${q(logFile)}; exit $e`
+
+// A run is green when it fails nothing that was not already failing at baseline.
+// On a green baseline the exit code must also be 0: an import error removes a
+// whole file from the report without adding a failing case.
+export function suiteOk(res, baselineFailing = []) {
+  const known = new Set(baselineFailing)
+  const fresh = res.cases.filter(c => c.outcome === 'fail' && !known.has(`${c.file} › ${c.name}`))
+  return fresh.length === 0 && (known.size > 0 || res.exit === 0)
 }

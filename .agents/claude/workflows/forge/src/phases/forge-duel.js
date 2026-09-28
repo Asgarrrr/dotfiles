@@ -16,7 +16,7 @@ const BLUE_PROMPT =
   'every input, not just the one tested. Never edit a test file. Do not commit. If a bug is not a real ' +
   'violation of its clause, return outcome "reject" for it instead of changing code.'
 
-const { slice, record: rec, paths: P, runId, testCmd, attackers, mutation, round = 1 } = args
+const { slice, record: rec, paths: P, runId, testCmd, install, attackers, mutation, round = 1, baselineFailing = [] } = args
 const out = { ledger: [], slice: rec }
 rec.duel = rec.duel || { rounds: [] }
 const R = { round, bugs: [] }
@@ -27,9 +27,11 @@ const temp = []
 const tag = a => `${slice.id}-r${round}-a${a}`
 const key = b => `a${b.attacker}/${b.id}`
 
+const addWorktree = (path, sha) => ({ cmd: `git worktree add -q --detach ${q(path)} ${sha}${install ? ` && cd ${q(path)} && ${install}` : ''}`, cwd: P.main })
+
 async function worktreeAt(label, path, sha) {
   temp.push(path)
-  await runOk(label, [{ cmd: `git worktree add -q --detach ${q(path)} ${sha}`, cwd: P.main }])
+  await runOk(label, [addWorktree(path, sha)])
 }
 
 // A scratch tree at `sha` with the given red files checked out and committed, so
@@ -59,23 +61,32 @@ async function attack() {
   await runOk(`red:worktrees:${slice.id}-r${round}`, attackers.map((_, i) => {
     const path = `${P.wtRoot}/red-${tag(i + 1)}`
     temp.push(path)
-    return { cmd: `git worktree add -q --detach ${q(path)} ${rec.commits.A}`, cwd: P.main }
+    return addWorktree(path, rec.commits.A)
   }))
   const results = await Promise.all(attackers.map((model, i) => agent(
     withCtx(RED_PROMPT, { worktree: `${P.wtRoot}/red-${tag(i + 1)}`, slice, round, attacker: i + 1 }),
     { label: `red:${slice.id}:r${round}:a${i + 1}`, model, effort: 'high', schema: RED_SCHEMA },
   )))
+  // A dead attacker is missing coverage, not a clean slice.
+  const dead = results.map((r, i) => (r && Array.isArray(r.bugs) ? null : `a${i + 1}`)).filter(Boolean)
+  if (dead.length) stop('escalated', `${slice.id} round ${round}: attacker(s) ${dead.join(', ')} returned nothing`)
   const found = []
   for (const [i, res] of results.entries()) {
-    const bugs = ((res && res.bugs) || []).slice(0, 5)
+    const bugs = res.bugs.slice(0, 5)
     if (!bugs.length) continue
     const wt = `${P.wtRoot}/red-${tag(i + 1)}`
-    const [, , names, head] = await runOk(`red:commit:${tag(i + 1)}`, [
+    const [still, , , names, head] = await run(`red:commit:${tag(i + 1)}`, [
+      { cmd: `test "$(git rev-parse HEAD)" = ${rec.commits.A}`, cwd: wt },
       { cmd: `git checkout -q -b ${q(`forge/${runId}/red-${tag(i + 1)}`)}`, cwd: wt },
       { cmd: `git add -A && git commit -q --allow-empty -m ${q(`red ${tag(i + 1)}`)}`, cwd: wt },
       { cmd: 'git diff --name-status HEAD~1 HEAD', cwd: wt, tail: 100000 },
       { cmd: 'git rev-parse HEAD', cwd: wt },
     ])
+    // An attacker that committed on its own leaves an empty diff here; say so.
+    if (still.exit !== 0) {
+      for (const b of bugs) record({ ...b, attacker: i + 1 }, { status: 'dropped', note: 'the attacker committed on its own' })
+      continue
+    }
     const status = new Map(names.tail.split('\n').filter(Boolean).map(l => { const [s, ...f] = l.split('\t'); return [f.join('\t'), s] }))
     const sha = shaOf(head.tail)
     for (const b of bugs) {
@@ -92,8 +103,10 @@ async function attack() {
 return await guard(out, async () => {
   try {
     const found = await attack()
+    const dropped = R.bugs.filter(b => b.status === 'dropped')
+    if (dropped.length) out.ledger.push(ledgerLine('decision', `${slice.id} round ${round}: dropped ${dropped.map(b => `a${b.attacker}/${b.id} (${b.note})`).join(', ')}`, rec.commits.B))
     if (!found.length) {
-      out.ledger.push(ledgerLine('verified', `${slice.id} round ${round}: no bug from ${attackers.length} attacker(s)`, rec.commits.B))
+      if (!dropped.length) out.ledger.push(ledgerLine('verified', `${slice.id} round ${round}: no bug from ${attackers.length} attacker(s)`, rec.commits.B))
       if (mutation) out.ledger.push(ledgerLine('decision', `${slice.id} mutation: skipped (not implemented in M1)`))
       return out
     }
@@ -101,7 +114,9 @@ return await guard(out, async () => {
     // Keep pairs whose two variants both fail correctly against B.
     const atB = await scratchRun(`${slice.id}-r${round}-B`, rec.commits.B, [...byAttacker(found)].map(([sha, bs]) => ({ sha, files: bs.flatMap(b => [b.v1.file, b.v2.file]) })))
     const failing = found.filter(b => outcomes([b.v1, b.v2], atB.cases).every(o => o === 'fail'))
-    for (const b of found) if (!failing.includes(b)) record(b, { status: 'dropped', note: 'variants must both fail at B' })
+    const notFailing = found.filter(b => !failing.includes(b))
+    for (const b of notFailing) record(b, { status: 'dropped', note: 'variants must both fail at B' })
+    if (notFailing.length) out.ledger.push(ledgerLine('decision', `${slice.id} round ${round}: dropped ${notFailing.map(b => `a${b.attacker}/${b.id}`).join(', ')} (variants must both fail at B)`, rec.commits.B))
     if (!failing.length) return out
 
     const [...sources] = await runOk(`red:sources:${slice.id}-r${round}`, failing.map(b => ({ cmd: `git show ${b.sha}:${q(b.v1.file)}`, cwd: P.main, tail: 20000 })))
@@ -121,23 +136,26 @@ return await guard(out, async () => {
     const v1Files = valid.map(b => b.v1.file)
     await runOk(`red:land:${slice.id}-r${round}`, [...byAttacker(valid)].map(([sha, bs]) => ({ cmd: `git checkout ${sha} -- ${bs.map(b => q(b.v1.file)).join(' ')}`, cwd: P.main })))
     rec.commits.R = await commit(`commit:${slice.id}:R${round}`, P.main, `${slice.id} red r${round}`)
+    out.head = rec.commits.R
 
     const blue = await agent(withCtx(BLUE_PROMPT, { worktree: P.main, bugs: valid.map(b => ({ id: key(b), clause: b.clause, file: b.v1.file, name: b.v1.name })) }), {
       label: `blue:${slice.id}:r${round}`, agentType: 'implementer', model: 'opus', effort: 'high', schema: BLUE_SCHEMA,
     })
     const outcome = b => ((blue && blue.results) || []).find(r => r.bug === key(b))
-    const { touched } = await protectedChanges(`changes:${slice.id}:F${round}`, P.main)
+    const { touched } = await protectedChanges(`${slice.id} blue r${round}`, P.main, rec.commits.R)
     if (touched.length) {
       rec.protectedTouched = touched
       stop('blocked', `${slice.id} blue touched protected file(s): ${touched.join(', ')}`)
     }
     rec.commits.F = await commit(`commit:${slice.id}:F${round}`, P.main, `${slice.id} fix r${round}`)
+    out.head = rec.commits.F
 
-    const [diff] = await runOk(`tamper:${slice.id}-r${round}`, [{ cmd: `git diff --name-only ${rec.commits.R} ${rec.commits.F} -- ${v1Files.map(q).join(' ')}`, cwd: P.main, tail: 100000 }])
-    const tampered = diff.tail.split('\n').filter(Boolean)
+    // Blue may edit neither the red tests nor the builder's clause tests.
+    const clauseFiles = [...new Set((rec.atB || []).map(r => r.file).filter(Boolean))]
+    const tampered = await editedBetween(`tamper:${slice.id}-r${round}`, P.main, rec.commits.R, rec.commits.F, [...new Set([...v1Files, ...clauseFiles])])
     if (tampered.length) {
       for (const b of valid) record(b, { status: tampered.includes(b.v1.file) ? 'tamper' : 'unchecked' })
-      stop('blocked', `${slice.id} tamper: blue edited red test file(s) ${tampered.join(', ')}`)
+      stop('blocked', `${slice.id} tamper: blue edited test file(s) ${tampered.join(', ')}`)
     }
 
     const atF = await scratchRun(`${slice.id}-r${round}-F`, rec.commits.F, [...byAttacker(valid)].map(([sha, bs]) => ({ sha, files: bs.map(b => b.v2.file) })))
@@ -154,15 +172,23 @@ return await guard(out, async () => {
     if (fixed.length) {
       await runOk(`red:heldout:${slice.id}-r${round}`, [...byAttacker(fixed)].map(([sha, bs]) => ({ cmd: `git checkout ${sha} -- ${bs.map(b => q(b.v2.file)).join(' ')}`, cwd: P.main })))
       out.head = await commit(`commit:${slice.id}:H${round}`, P.main, `${slice.id} red held-out r${round}`)
-    } else out.head = rec.commits.F
+    }
     const open = R.bugs.filter(b => ['rejected', 'unfixed', 'held-out-failed'].includes(b.status))
-    if (open.length || regressions || atF.exit !== 0) {
+    if (open.length || regressions || !suiteOk(atF, baselineFailing)) {
       stop('escalated', `${slice.id} round ${round}: ${open.map(b => `${b.id} ${b.status}`).join(', ') || 'no open bug'}; ${regressions} clause test(s) regressed; suite → ${atF.exit}`)
     }
-    out.ledger.push(ledgerLine('verified', `${slice.id} round ${round}: ${fixed.length} bug(s) fixed, variant 2 held out and passing, suite → 0`, out.head))
+    out.ledger.push(ledgerLine('verified', `${slice.id} round ${round}: ${fixed.length} bug(s) fixed, variant 2 held out and passing, no failure outside the baseline`, out.head))
     return out
   } finally {
     // Red and scratch trees are evidence only while the phase runs; branches stay.
-    if (temp.length) await run(`cleanup:${slice.id}-r${round}`, [...temp.map(t => ({ cmd: `git worktree remove --force ${q(t)}`, cwd: P.main })), { cmd: 'git worktree prune', cwd: P.main }])
+    // A cleanup failure must not replace the stop that brought us here.
+    if (temp.length) {
+      try {
+        await run(`cleanup:${slice.id}-r${round}`, [...temp.map(t => ({ cmd: `git worktree remove --force ${q(t)}`, cwd: P.main })), { cmd: 'git worktree prune', cwd: P.main }])
+      } catch (e) {
+        if (!(e && e.forge)) throw e
+        out.ledger.push(ledgerLine('error', `${slice.id} cleanup: ${e.forge.reason}`))
+      }
+    }
   }
 })

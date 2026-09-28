@@ -11,7 +11,7 @@ const REVIEW_PROMPT =
   'break if it were deleted?), residue, security issues no test covers, and any change not traceable to a ' +
   'clause. Mark a finding blocking only if it must be fixed before merge.'
 
-const { paths: P, commands, base, records = [], plan, dismissed = [], signals = [] } = args
+const { paths: P, commands, base, records = [], plan, dismissed = [], signals = [], baselineFailing = [] } = args
 const out = { ledger: [] }
 
 function report(final, extra, findings) {
@@ -54,7 +54,7 @@ return await guard(out, async () => {
   const findings = (review && review.findings) || []
   out.report = report(final, extra, findings)
 
-  if (final.exit !== 0) stop('failed', `final suite ${commands.test} → ${final.exit}`)
+  if (!suiteOk(final, baselineFailing)) stop('failed', `final suite ${commands.test} → ${final.exit} with failures outside the baseline`)
   if (extra.some(x => x.exit !== 0)) stop('failed', `close checks failed: ${extra.filter(x => x.exit !== 0).map(x => x.name).join(', ')}`)
   const blocking = findings.filter(f => f.blocking)
   if (blocking.length) stop('escalated', `review: ${blocking.length} blocking finding(s) — see report.md`)

@@ -29,20 +29,21 @@ The forge implementation must satisfy this, or the checks cannot observe it.
 |---|---|---|
 | runner | `commands: [{cmd, cwd, tail?}]` | `{results: [{cmd, exit, tail}]}` |
 | scribe | `writes: [{path, content}]`, `reads: [path]` | `{files: [{path, sha256, bytes, content?, missing?}]}` |
-| scout | `task, dir` | `{files, helpers, conventions, signals: [{id, where}], commands: {test, fast, typecheck, lint}}` |
+| scout | `task, dir` | `{files, helpers, conventions, signals: [{id, where}], commands: {install, test, fast, typecheck, lint}}` |
 | planner | `task, scout, feedback?` | `{slices: [...§8 schema], rejected: []}` |
 | shadow | `task, scout, signals` | `{clauses: [{id, kind, input, action, expected, signal}]}` |
 | comparator | `plan, shadow` | `{pairs: [{planner_clause, shadow_clause, verdict}]}` |
 | critic | `clauses` | `{verdicts: [{clause, verdict}]}` |
 | builder | `stage: 'A'\|'B', worktree, slice, retry?: [{clause, test, verdict}]` | A: `{tests: [{clause, file, name, lines: [from, to]}]}` · B: `{done: true}` |
-| judge | `items: [{clause: {id, kind, input, action, expected}, test, source}]` | `{verdicts: [{test, verdict}]}` |
+| judge | `items: [{ref, clause: {id, kind, input, action, expected}, test, source}]` | `{verdicts: [{ref, verdict}]}` — bound by `ref`, never by test name (M1 review) |
 | red | `worktree, slice, round, attacker` | `{bugs: [{id, clause, variants: [{file, name}, {file, name}]}]}` |
 | blue | `worktree, bugs: [{id, clause, file, name}]` — variant 1 only | `{results: [{bug, outcome: 'fixed'\|'reject', clause}]}` |
 | seat, reviewer | free | `{concerns: []}`, `{findings: []}` |
 
 - **Run dir:** `<dir>/.claude/runs/<runId>/` with `run.json` (`{runId, phase, status, tier, risk, signals, lastSha, worktree, planHash?}`), `plan.json`, `slices/<id>.json`, and `ledger.md`.
-- **Slice record:** `{id, status: 'done'|'blocked'|'failed'|'escalated', reason?, commits: {A, B?, R?, F?}, judge: [{test, clause, verdict, attempt}], atA: [{test, clause, kind, outcome: 'fail'|'pass'|'not-collected'}], atB: [{test, clause, outcome}], protectedTouched: [], duel: {rounds: [{round, bugs: [{id, clause, verdict, status}]}]}}`. Bug `status` is one of `fixed | discarded | rejected | held-out-failed | tamper | dropped`.
-- **Result:** `{status: 'done'|'checkpoint'|'refused'|'escalated'|'blocked'|'error', runId, runDir, reason?, planHash?, questions?: [{id, text}], underspecified?}`.
+- **Slice record:** `{id, status: 'done'|'blocked'|'failed'|'escalated', reason?, commits: {A, B?, R?, F?}, judge: [{test, clause, verdict, attempt}], atA: [{test, clause, kind, outcome: 'fail'|'pass'|'not-collected'}], atB: [{test, clause, outcome}], protectedTouched: [], duel: {rounds: [{round, bugs: [{id, clause, verdict, status}]}]}}`. Bug `status` is one of `fixed | discarded | overreach | rejected | unfixed | held-out-failed | tamper | unchecked | dropped`.
+- **Result:** `{status: 'done'|'checkpoint'|'refused'|'escalated'|'blocked'|'error', runId, runDir, reason?, planHash?, questions?: [{id, text}], underspecified?}`. A slice `failed` after its attempts yields result `escalated`.
+- **Runner shell:** the fake runs `zsh -c`, like the Bash tool here. Commands must not rely on bash-only syntax (`PIPESTATUS`).
 - **Branch:** `forge/<runId>/main`. Commit subjects are `<slice> tests` and `<slice> impl`. Ledger SHAs are 7 characters.
 - **The user's checkout stays clean:** `git status --porcelain` in `<dir>` is empty after a run. `.claude/` is excluded via `.git/info/exclude`.
 

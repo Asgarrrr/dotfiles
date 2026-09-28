@@ -33,6 +33,8 @@ function utf8Bytes(str) {
 
 const rotr = (x, n) => (x >>> n) | (x << (32 - n))
 
+const byteLength = str => utf8Bytes(str).length
+
 function sha256(str) {
   const bytes = utf8Bytes(str)
   const bitLen = bytes.length * 8
@@ -232,6 +234,19 @@ function ledgerLine(kind, text, sha) {
   return `[${kind}] ${text}${sha ? ` @${String(sha).slice(0, 7)}` : ''}`
 }
 
+// No pipe: zsh (the Bash tool's shell here) has no PIPESTATUS, so `suite | tail`
+// would report tail's exit code and every suite would read as green.
+const suiteCommand = (cmd, logFile) => `( ${cmd} ) > ${q(logFile)} 2>&1; e=$?; tail -c 3000 ${q(logFile)}; exit $e`
+
+// A run is green when it fails nothing that was not already failing at baseline.
+// On a green baseline the exit code must also be 0: an import error removes a
+// whole file from the report without adding a failing case.
+function suiteOk(res, baselineFailing = []) {
+  const known = new Set(baselineFailing)
+  const fresh = res.cases.filter(c => c.outcome === 'fail' && !known.has(`${c.file} › ${c.name}`))
+  return fresh.length === 0 && (known.size > 0 || res.exit === 0)
+}
+
 // Helpers that spawn agents. They use the workflow runtime's `agent` global, so
 // they are tested through the scenario checks, not in isolation.
 
@@ -299,14 +314,24 @@ async function commit(label, cwd, message, { amend = false } = {}) {
   return shaOf(head.tail)
 }
 
-async function changedFiles(label, cwd) {
-  const [r] = await runOk(label, [{ cmd: 'git status --porcelain=v1 -uall', cwd, tail: 100000 }])
-  return parsePorcelain(r.tail)
+// An agent told not to commit may commit anyway; a clean tree would then hide its
+// edits from porcelain. HEAD must still be where the script left it.
+async function protectedChanges(label, cwd, expectedHead) {
+  const [head, status] = await runOk(label, [
+    { cmd: 'git rev-parse HEAD', cwd },
+    { cmd: 'git status --porcelain=v1 -uall', cwd, tail: 100000 },
+  ])
+  const now = shaOf(head.tail)
+  if (now !== expectedHead) stop('blocked', `${label}: the agent committed on its own (HEAD ${now.slice(0, 7)}, expected ${expectedHead.slice(0, 7)})`)
+  const changed = parsePorcelain(status.tail)
+  return { changed, touched: changed.filter(isProtected) }
 }
 
-async function protectedChanges(label, cwd) {
-  const changed = await changedFiles(label, cwd)
-  return { changed, touched: changed.filter(isProtected) }
+// Files changed between two commits, limited to `files` — the tamper check.
+async function editedBetween(label, cwd, from, to, files) {
+  if (!files.length) return []
+  const [r] = await runOk(label, [{ cmd: `git diff --name-only ${from} ${to} -- ${files.map(q).join(' ')}`, cwd, tail: 100000 }])
+  return r.tail.split('\n').filter(Boolean)
 }
 
 // Runs the suite with a JUnit report. Only the tags are returned — a small surface
@@ -317,7 +342,7 @@ async function runTests(label, { cwd, testCmd, runDir }) {
   if (!jc) stop('escalated', `no JUnit adapter yet for the test command "${testCmd}"`)
   const [clean, suite, report] = await run(`test:${label}`, [
     { cmd: 'test -z "$(git status --porcelain)"', cwd },
-    { cmd: `mkdir -p ${q(`${runDir}/junit`)} && rm -f ${q(out)} && ${jc} 2>&1 | tail -c 3000; exit \${PIPESTATUS[0]}`, cwd, tail: 3000 },
+    { cmd: `mkdir -p ${q(`${runDir}/junit`)} && rm -f ${q(out)} && ${suiteCommand(jc, `${runDir}/junit/${label}.log`)}`, cwd, tail: 3000 },
     { cmd: `grep -oE '<testcase [^>]*>|</testcase>|<(failure|error) type="[^"]*"|<skipped' ${q(out)}`, cwd, tail: 400000 },
   ])
   if (clean.exit !== 0) stop('blocked', `tree not clean before the test run in ${cwd}`)
@@ -347,6 +372,15 @@ async function persist(label, writes) {
     const f = got.get(w.path)
     if (!f || f.sha256 !== sha256(w.content)) stop('error', `write-hash-mismatch: ${w.path}`)
   }
+  // The scribe could hash the content without writing it. The runner, a separate
+  // agent, reads the file back from disk.
+  const checks = await run(`verify:${label}`, list.map(w => ({ cmd: `shasum -a 256 ${q(w.path)} && wc -c < ${q(w.path)}`, cwd: '/' })))
+  list.forEach((w, i) => {
+    const [hash, bytes] = [checks[i].tail.match(/\b[0-9a-f]{64}\b/), checks[i].tail.trim().split(/\s+/).pop()]
+    if (checks[i].exit !== 0 || !hash || hash[0] !== sha256(w.content) || Number(bytes) !== byteLength(w.content)) {
+      stop('error', `write-hash-mismatch on disk: ${w.path}`)
+    }
+  })
 }
 
 // ---------- judge ----------
@@ -354,25 +388,27 @@ async function persist(label, writes) {
 const JUDGE_PROMPT =
   'You are the forge judge. Each item in FORGE_CTX.items pairs a spec clause with a test that claims ' +
   'to check it. You see no implementation, on purpose; do not look for one and do not use tools. ' +
-  'For each item return one verdict:\n' +
+  'For each item return one verdict, keyed by the item\'s `ref`:\n' +
   '- valid: the test fails for any implementation that violates the clause and passes for one that meets it.\n' +
   '- too_weak: a wrong implementation could still pass (e.g. the clause expects 401, the test asserts only "not 200").\n' +
   '- overreach: the test demands behavior the clause does not state.\n' +
   '- wrong_oracle: the expected value contradicts the clause.'
 const JUDGE_SCHEMA = obj({
-  verdicts: arr(obj({ test: str, verdict: { type: 'string', enum: ['valid', 'too_weak', 'overreach', 'wrong_oracle'] } })),
+  verdicts: arr(obj({ ref: str, verdict: { type: 'string', enum: ['valid', 'too_weak', 'overreach', 'wrong_oracle'] } })),
 })
 
 const clauseView = c => ({ id: c.id, kind: c.kind, input: c.input, action: c.action, expected: c.expected })
 
 // Returns one verdict per item, in order; an item the judge skipped is 'missing'.
-async function judge(label, items) {
+// Verdicts bind to a ref, not a test name: two items may share a name.
+async function judge(label, list) {
+  const items = list.map((item, i) => ({ ref: String(i + 1), ...item }))
   const r = await agent(withCtx(JUDGE_PROMPT, { items }), {
     label: `judge:${label}`, model: 'opus', effort: 'medium', schema: JUDGE_SCHEMA,
   })
   const verdicts = (r && r.verdicts) || []
   return items.map(i => {
-    const v = verdicts.find(x => x.test === i.test)
+    const v = verdicts.find(x => x.ref === i.ref)
     return v ? v.verdict : 'missing'
   })
 }
@@ -383,7 +419,7 @@ const clauseSchema = obj({ id: str, kind: str, input: str, action: str, expected
 const SCOUT_SCHEMA = obj({
   files: arr(str), helpers: arr(str), conventions: str,
   signals: arr(obj({ id: { type: 'string', enum: ['persistence', 'auth', 'money', 'concurrency', 'untrusted-input', 'public-api', 'data-loss'] }, where: str })),
-  commands: obj({ test: str, fast: str, typecheck: { type: ['string', 'null'] }, lint: { type: ['string', 'null'] } }),
+  commands: obj({ install: { type: ['string', 'null'] }, test: str, fast: str, typecheck: { type: ['string', 'null'] }, lint: { type: ['string', 'null'] } }),
 })
 const PLAN_SCHEMA = obj({
   slices: arr(obj({
@@ -423,14 +459,14 @@ const BUILDER_B_PROMPT =
   'and do not touch test config, package scripts, lockfiles or CI. If FORGE_CTX.failures is set, your ' +
   'previous attempt left those tests failing; the tail is the suite output.'
 
-const { slice, paths: P, testCmd } = args
+const { slice, paths: P, testCmd, head, baselineFailing = [] } = args
 const rec = { id: slice.id, status: 'running', commits: {}, judge: [], atA: [], atB: [], protectedTouched: [], outOfScope: [] }
 const out = { ledger: [], slice: rec }
 const clauses = Object.fromEntries(slice.spec.map(c => [c.id, c]))
 const mustFailAtA = kind => kind !== 'preserve'
 
-async function checkChanges(label) {
-  const { changed, touched } = await protectedChanges(label, P.main)
+async function checkChanges(label, expectedHead) {
+  const { changed, touched } = await protectedChanges(label, P.main, expectedHead)
   if (touched.length) {
     rec.protectedTouched = touched
     stop('blocked', `${slice.id} touched protected file(s): ${touched.join(', ')}`)
@@ -448,7 +484,7 @@ return await guard(out, async () => {
       label: `builder:${slice.id}:A${attempt}`, agentType: 'implementer', model: 'opus', effort: 'high', schema: BUILDER_A_SCHEMA,
     })
     tests = ((res && res.tests) || []).filter(t => clauses[t.clause])
-    await checkChanges(`changes:${slice.id}:A${attempt}`)
+    await checkChanges(`${slice.id} builder A${attempt}`, head)
     const missing = slice.spec.filter(c => !tests.some(t => t.clause === c.id)).map(c => ({ clause: c.id, verdict: 'missing' }))
     let bad = missing
     if (!missing.length) {
@@ -456,12 +492,15 @@ return await guard(out, async () => {
       const sources = await runOk(`sources:${slice.id}:A${attempt}`, tests.map(t => ({
         cmd: `sed -n ${Number(t.lines[0])},${Number(t.lines[1])}p ${q(t.file)}`, cwd: P.main, tail: 20000,
       })))
+      // The builder reports the line range; a block that does not hold the named
+      // test would let the judge rate a different, stronger test.
+      const misplaced = tests.filter((t, i) => !sources[i].tail.includes(t.name))
       const items = tests.map((t, i) => ({ clause: clauseView(clauses[t.clause]), test: t.name, source: sources[i].tail }))
-      const verdicts = await judge(`${slice.id}:A${attempt}`, items)
+      const verdicts = (await judge(`${slice.id}:A${attempt}`, items)).map((v, i) => (misplaced.includes(tests[i]) ? 'misplaced' : v))
       tests.forEach((t, i) => rec.judge.push({ test: t.name, clause: t.clause, verdict: verdicts[i], attempt }))
       for (const [i, v] of verdicts.entries()) if (v === 'overreach') out.ledger.push(ledgerLine('gap', `${slice.id} ${tests[i].clause}: builder test overreaches the clause`))
       bad = tests.map((t, i) => ({ clause: t.clause, test: t.name, verdict: verdicts[i] }))
-        .filter(x => x.verdict === 'too_weak' || x.verdict === 'wrong_oracle' || x.verdict === 'missing')
+        .filter(x => ['too_weak', 'wrong_oracle', 'missing', 'misplaced'].includes(x.verdict))
     }
     if (!bad.length) break
     if (attempt === 2) stop('escalated', `${slice.id} builder tests rejected twice: ${bad.map(b => `${b.clause} ${b.verdict}`).join(', ')}`)
@@ -482,14 +521,16 @@ return await guard(out, async () => {
     await agent(withCtx(BUILDER_B_PROMPT, { stage: 'B', worktree: P.main, slice, tests, failures }), {
       label: `builder:${slice.id}:B${attempt}`, agentType: 'implementer', model: 'opus', effort: 'high', schema: DONE_SCHEMA,
     })
-    await checkChanges(`changes:${slice.id}:B${attempt}`)
     // Attempt 2 amends B on the run's private branch, so B~1 stays A.
+    await checkChanges(`${slice.id} builder B${attempt}`, attempt > 1 ? rec.commits.B : rec.commits.A)
     rec.commits.B = await commit(`commit:${slice.id}:B${attempt}`, P.main, `${slice.id} impl`, { amend: attempt > 1 })
+    const edited = await editedBetween(`tamper:${slice.id}:B${attempt}`, P.main, rec.commits.A, rec.commits.B, [...new Set(tests.map(t => t.file))])
+    if (edited.length) stop('blocked', `${slice.id} tamper: builder B edited clause test file(s) ${edited.join(', ')}`)
     const atB = await runTests(`${slice.id}-B${attempt}`, { cwd: P.main, testCmd, runDir: P.runDir })
     rec.atB = tests.map((t, i) => row(t, outcomes(tests, atB.cases)[i]))
     const failing = rec.atB.filter(r => r.outcome !== 'pass')
-    if (!failing.length && atB.exit === 0) {
-      out.ledger.push(ledgerLine('verified', `${testCmd} → 0`, rec.commits.B))
+    if (!failing.length && suiteOk(atB, baselineFailing)) {
+      out.ledger.push(ledgerLine('verified', `${testCmd} → ${atB.exit}, no failure outside the baseline`, rec.commits.B))
       break
     }
     out.ledger.push(ledgerLine('failed', `${slice.id} attempt ${attempt} at B: ${testCmd} → ${atB.exit}, ${failing.length} clause test(s) not passing`, rec.commits.B))
