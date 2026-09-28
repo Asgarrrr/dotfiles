@@ -1,0 +1,1 @@
+{ "app": "app", "task": "Add slugify(title) to src/text.ts: lowercase, runs of non-alphanumerics become one hyphen, no leading or trailing hyphen." }

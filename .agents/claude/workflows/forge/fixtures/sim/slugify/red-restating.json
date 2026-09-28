@@ -1,0 +1,10 @@
+{
+  "bugs": [{
+    "id": "b1",
+    "clause": "S1.1",
+    "variants": [
+      { "file": "src/red/S1-b1-v1.test.ts", "name": "b1 v1: words join with underscores" },
+      { "file": "src/red/S1-b1-v2.test.ts", "name": "b1 v2: words join with underscores, again" }
+    ]
+  }]
+}

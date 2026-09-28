@@ -1,0 +1,7 @@
+{
+  "files": ["src/text.ts", "src/text.test.ts"],
+  "helpers": [],
+  "conventions": "named exports, bun:test, tests beside sources",
+  "signals": [],
+  "commands": { "test": "bun test", "fast": "bun test", "typecheck": null, "lint": null }
+}

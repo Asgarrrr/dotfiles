@@ -1,0 +1,21 @@
+{
+  "slices": [{
+    "id": "S1",
+    "title": "slugify",
+    "files": ["src/text.ts", "src/text.test.ts"],
+    "spec": [
+      { "id": "S1.1", "kind": "behavior", "input": "'Hello World'", "action": "slugify(input)", "expected": "'hello-world'", "source": "task" },
+      { "id": "S1.2", "kind": "behavior", "input": "'C++ & Rust'", "action": "slugify(input)", "expected": "'c-rust': a run of non-alphanumerics becomes one hyphen", "source": "task" },
+      { "id": "S1.3", "kind": "behavior", "input": "a title with leading or trailing separators, e.g. '  Hello  '", "action": "slugify(input)", "expected": "no leading or trailing hyphen: 'hello'", "source": "task" }
+    ],
+    "acceptance": [
+      { "clause": "S1.1", "level": "unit" },
+      { "clause": "S1.2", "level": "unit" },
+      { "clause": "S1.3", "level": "unit" }
+    ],
+    "structure": "none",
+    "depends_on": [],
+    "notes": ""
+  }],
+  "rejected": []
+}
