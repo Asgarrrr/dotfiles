@@ -2,7 +2,7 @@
 name: reviewer
 description: Reviews a diff against the brief that produced it. Use after any implementer batch, and before claiming a multi-file change is done.
 tools: Read, Grep, Glob, Bash
-model: fable
+model: opus
 effort: high
 ---
 

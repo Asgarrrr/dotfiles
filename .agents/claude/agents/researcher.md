@@ -2,7 +2,7 @@
 name: researcher
 description: Verifies libraries, versions, and current APIs against live documentation. Use before adopting a dependency or writing code against an API you have not confirmed.
 tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, mcp__context7__resolve-library-id, mcp__context7__query-docs, mcp__deepwiki__ask_question, mcp__deepwiki__read_wiki_structure, mcp__deepwiki__read_wiki_contents
-model: fable
+model: opus
 effort: high
 ---
 

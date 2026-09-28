@@ -1,11 +1,11 @@
 export const meta = {
   name: 'big-feature',
   description: 'Explore → vet → plan → checkpoint → implement vertical slices → adversarial review',
-  whenToUse: 'Large multi-file features or refactors. args: {task: "...", dir: "/abs/path/to/repo", go: false, until: 1, slices: [...]} (or a plain task string, dir defaults to cwd). Stops after Plan unless go:true. With until:N, stops after N slices so you can read the diff — relaunch with resumeFromRunId and a higher until; finished work replays from cache. In a FRESH session the cache is gone: pass the approved plan back as args.slices with go:true to execute it verbatim, skipping explore/vet/plan.',
+  whenToUse: 'Large multi-file features or refactors. args: {task: "...", dir: "/abs/path/to/repo", go: false, until: 1, slices: [...], gpt: false, fable: false} (or a plain task string, dir defaults to cwd). fable:true escalates Plan and council to Fable — for novel or large multi-agent work, or after Opus failed twice. Stops after Plan unless go:true. With until:N, stops after N slices so you can read the diff — relaunch with resumeFromRunId and a higher until; finished work replays from cache. In a FRESH session the cache is gone: pass the approved plan back as args.slices with go:true to execute it verbatim, skipping explore/vet/plan.',
   phases: [
     { title: 'Explore', detail: 'three cheap readers map conventions, existing code, and the test surface', model: 'sonnet' },
     { title: 'Vet', detail: 'dependency check, plus a council answering one design question blind; a synthesiser compares by content, then any contested concern goes back to the seat that missed it' },
-    { title: 'Plan', detail: 'walking skeleton first, then slices by added dimension — architecture first, content progressive', model: 'fable' },
+    { title: 'Plan', detail: 'walking skeleton first, then slices by added dimension — architecture first, content progressive', model: 'opus' },
     { title: 'Implement', detail: 'sequential slices, test-first, session model' },
     { title: 'Review', detail: 'adversarial review of the full diff, then fixes, then an independent recheck' },
   ],
@@ -34,6 +34,12 @@ if (!task) throw new Error('big-feature needs a task: args = {task: "...", dir: 
 // is a NEW plan, not the one that was approved.
 // gpt: add a blind second opinion on the design from GPT via the codex CLI.
 const useGpt = opts.gpt === true || opts.gpt === 'true'
+// fable: escalation for novel or large multi-agent work — plans on fable, seats it
+// on the council. Opus 5.5 matches it on most tasks at 2.5x less per token.
+const escalate = opts.fable === true || opts.fable === 'true'
+// Fable seats only on explicit escalation: same family as Opus, so its errors are
+// likely correlated, at 2.5x the price. Without GPT the council is Opus alone.
+const useFable = escalate
 const givenSlices = Array.isArray(opts.slices) ? opts.slices : null
 if (givenSlices) {
   if (!givenSlices.length) throw new Error('big-feature: args.slices is empty')
@@ -119,7 +125,7 @@ const VET_EVIDENCE_RULE =
 if (!givenSlices) phase('Vet')
 // Must mirror the thunk order below: parallel() returns results positionally, and a
 // dead agent yields null, so labels cannot be recovered from the results themselves.
-const councilLabels = ['vet:deps', 'council:fable', 'council:opus', ...(useGpt ? ['council:gpt'] : [])]
+const councilLabels = ['vet:deps', ...(useFable ? ['council:fable'] : []), 'council:opus', ...(useGpt ? ['council:gpt'] : [])]
 // Round 2 must go back to the reasoner that MISSED a concern. Without this map the
 // rebuttal spawns a default agent, and when the raiser is opus the same model is
 // asked to confirm its own concern — self-agreement reported as independent review.
@@ -136,9 +142,9 @@ const vetRaw = givenSlices ? [] : (await parallel([
   // COUNCIL: the same design question, answered blind by different reasoners.
   // Blind is the whole point — a member who has read another's answer is commenting,
   // not judging, and its agreement stops being evidence.
-  () => agent(
+  ...(useFable ? [() => agent(
     DESIGN_QUESTION + VET_EVIDENCE_RULE,
-    { label: 'council:fable', phase: 'Vet', model: 'fable', effort: 'xhigh', schema: VET }),
+    { label: 'council:fable', phase: 'Vet', model: 'fable', effort: 'xhigh', schema: VET })] : []),
   () => agent(
     DESIGN_QUESTION + VET_EVIDENCE_RULE,
     { label: 'council:opus', phase: 'Vet', model: 'opus', effort: 'high', schema: VET }),
@@ -498,7 +504,7 @@ const plan = givenSlices ? { slices: givenSlices } : await agent(
   `Before returning, grill your own plan as a staff engineer: strike any slice that is ` +
   `just a use case, any structure that fails the deletion test in rule 6, and any ` +
   `verification that would pass against an empty implementation. Fix what breaks.`,
-  { label: 'plan', phase: 'Plan', model: 'fable', effort: 'xhigh', schema: PLAN })
+  { label: 'plan', phase: 'Plan', model: escalate ? 'fable' : 'opus', effort: 'xhigh', schema: PLAN })
 
 // One dead planner must not destroy a run that already paid for Explore and Vet.
 if (!plan || !Array.isArray(plan.slices)) throw new Error('planning failed — relaunch to retry')

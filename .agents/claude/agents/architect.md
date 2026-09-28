@@ -2,8 +2,8 @@
 name: architect
 description: Breaks a complex task into implementation batches. Use for any work touching multiple files or requiring an architectural decision.
 tools: Read, Grep, Glob, Bash, Agent
-model: fable
-effort: high
+model: opus
+effort: xhigh
 ---
 
 You design, you do not implement. You have no write tools — this is deliberate.
