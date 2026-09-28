@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeRepo, git } from './repo.js'
 import { loadNamed, runWorkflow } from './load.js'
+import { readCtx, sha256, runCommands, honestScribe, lyingScribe, simAgents } from './fakes.js'
 
 describe('repo', () => {
   test('makeRepo commits the fixture app as "base" on main, with a clean tree', () => {
@@ -79,5 +80,58 @@ describe('load', () => {
     const logs = []
     await runWorkflow('l', {}, noAgent, { dir, onLog: m => logs.push(m) })
     expect(logs).toEqual(['hi'])
+  })
+})
+
+const ctxPrompt = ctx => `Do the thing.\nFORGE_CTX ${JSON.stringify(ctx)}\nThanks.`
+
+describe('fakes', () => {
+  test('readCtx parses the FORGE_CTX line and rejects a prompt without one', () => {
+    expect(readCtx(ctxPrompt({ a: 1 }))).toEqual({ a: 1 })
+    expect(() => readCtx('no context here')).toThrow('FORGE_CTX')
+  })
+
+  test('runner executes each command in its cwd and returns exit and tail', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'forge-run-'))
+    const r = runCommands([{ cmd: 'pwd', cwd }, { cmd: 'echo boom >&2; exit 3', cwd }])
+    expect(r.results[0]).toMatchObject({ exit: 0 })
+    expect(r.results[0].tail).toContain('forge-run-')
+    expect(r.results[1]).toMatchObject({ exit: 3, tail: 'boom\n' })
+  })
+
+  test('runner honors a per-command tail length', () => {
+    const r = runCommands([{ cmd: 'printf abcdef', cwd: tmpdir(), tail: 3 }])
+    expect(r.results[0].tail).toBe('def')
+  })
+
+  test('honest scribe writes, then hashes what is on disk', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'forge-scribe-')), 'a', 'b.json')
+    const r = honestScribe({ writes: [{ path, content: '{"x":1}' }] })
+    expect(readFileSync(path, 'utf8')).toBe('{"x":1}')
+    expect(r.files[0]).toEqual({ path, sha256: sha256('{"x":1}'), bytes: 7 })
+  })
+
+  test('honest scribe reads back content with its hash, and flags a missing file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'forge-scribe-'))
+    honestScribe({ writes: [{ path: join(dir, 'r.json'), content: 'hi' }] })
+    const r = honestScribe({ reads: [join(dir, 'r.json'), join(dir, 'nope')] })
+    expect(r.files[0]).toMatchObject({ content: 'hi', sha256: sha256('hi') })
+    expect(r.files[1]).toMatchObject({ missing: true })
+  })
+
+  test('lying scribe writes nothing and returns a hash that is not the content hash', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'forge-scribe-')), 'c.json')
+    const r = lyingScribe({ writes: [{ path, content: 'x' }] })
+    expect(existsSync(path)).toBe(false)
+    expect(r.files[0].sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(r.files[0].sha256).not.toBe(sha256('x'))
+  })
+
+  test('simAgents routes on the label prefix, records calls, and rejects an unknown role', async () => {
+    const { agent, calls } = simAgents('slugify', { planner: ctx => ({ echoed: ctx.task }) })
+    expect(await agent(ctxPrompt({ task: 't' }), { label: 'planner:main' })).toEqual({ echoed: 't' })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ role: 'planner', label: 'planner:main', ctx: { task: 't' } })
+    await expect(agent(ctxPrompt({}), { label: 'wizard:1' })).rejects.toThrow('no fake for role "wizard"')
   })
 })
