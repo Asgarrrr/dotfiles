@@ -1,0 +1,10 @@
+{
+  "name": "forge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./harness ./check",
+    "test:harness": "bun test ./harness",
+    "test:check": "bun test ./check"
+  }
+}
