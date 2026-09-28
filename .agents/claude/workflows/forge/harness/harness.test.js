@@ -99,6 +99,10 @@ describe('fakes', () => {
     expect(r.results[1]).toMatchObject({ exit: 3, tail: 'boom\n' })
   })
 
+  test('runner refuses a command without cwd instead of running in the harness directory', () => {
+    expect(() => runCommands([{ cmd: 'pwd' }])).toThrow('cwd')
+  })
+
   test('runner honors a per-command tail length', () => {
     const r = runCommands([{ cmd: 'printf abcdef', cwd: tmpdir(), tail: 3 }])
     expect(r.results[0].tail).toBe('def')

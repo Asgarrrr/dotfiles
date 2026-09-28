@@ -19,6 +19,8 @@ export function readCtx(prompt) {
 export function runCommands(commands) {
   return {
     results: commands.map(({ cmd, cwd, tail = DEFAULT_TAIL }) => {
+      // Without a cwd, spawnSync runs in the harness package: real exit codes, wrong tree.
+      if (!cwd) throw new Error(`runner command has no cwd: ${cmd}`)
       const r = spawnSync('bash', ['-c', cmd], { cwd, encoding: 'utf8' })
       return { cmd, exit: r.status ?? -1, tail: ((r.stdout || '') + (r.stderr || '')).slice(-tail) }
     }),
