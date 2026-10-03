@@ -34,7 +34,7 @@ ai-link:
   ln -sf "$dotfiles_dir/.agents/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
   ln -sfn "$dotfiles_dir/.agents/claude/hooks" "$HOME/.claude/hooks"
   ln -sfn "$dotfiles_dir/.agents/claude/rules" "$HOME/.claude/rules"
-  envsubst < "$dotfiles_dir/.agents/codex/config.toml.tmpl" > "$HOME/.codex/config.toml"
+  ln -sf "$dotfiles_dir/.agents/codex/config.toml" "$HOME/.codex/config.toml"
 
   shopt -s nullglob
   for skill in "$dotfiles_dir"/.agents/skills/*; do
