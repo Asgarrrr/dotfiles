@@ -31,6 +31,7 @@ ai-link:
   ln -sf "$dotfiles_dir/.agents/README.md" "$HOME/.agents/README.md"
   ln -sf "$dotfiles_dir/.agents/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
   ln -sf "$dotfiles_dir/.agents/claude/settings.json" "$HOME/.claude/settings.json"
+  ln -sf "$dotfiles_dir/.agents/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
   ln -sfn "$dotfiles_dir/.agents/claude/hooks" "$HOME/.claude/hooks"
   ln -sfn "$dotfiles_dir/.agents/claude/rules" "$HOME/.claude/rules"
   envsubst < "$dotfiles_dir/.agents/codex/config.toml.tmpl" > "$HOME/.codex/config.toml"
