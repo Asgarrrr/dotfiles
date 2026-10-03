@@ -31,7 +31,10 @@ if [ "$tool_name" = "Bash" ]; then
     deny "Blocked: rm -rf is forbidden (CLAUDE.md §11). Use \`trash <file>\` or ask for explicit confirmation."
   fi
 
-  if printf '%s' "$cmd" | grep -qE '(^|[;&|]\s*)git\s+(push\s+.*(-f|--force)|push\s+--force)'; then
+  # The flag must stand as its own word: the old `.*(-f|--force)` matched any
+  # branch carrying a hyphen-f, so `git push origin feat/custom-field-filters`
+  # read as a force push.
+  if printf '%s' "$cmd" | grep -qE '(^|[;&|]\s*)git\s+push\s+(.*\s)?(-f|--force|--force-with-lease=[^ ]*)(\s|$)'; then
     deny "Blocked: git push --force on shared branches is forbidden (CLAUDE.md §11). Use --force-with-lease or ask for confirmation."
   fi
 

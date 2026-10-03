@@ -37,7 +37,7 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "opus[1m]",
+  "model": "sonnet",
   "disableClaudeAiConnectors": true,
   "hooks": {
     "PreToolUse": [
@@ -62,12 +62,6 @@
             "command": "~/.claude/hooks/format-on-edit.sh",
             "timeout": 10,
             "statusMessage": "Formatting..."
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/guard-imports.sh",
-            "timeout": 15,
-            "statusMessage": "Resolving imports..."
           }
         ]
       }
@@ -135,6 +129,7 @@
   "feedbackSurveyRate": 0,
   "effortLevel": "high",
   "showClearContextOnPlanAccept": true,
+  "tui": "fullscreen",
   "voice": {
     "enabled": true,
     "mode": "hold"

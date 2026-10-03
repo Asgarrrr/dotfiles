@@ -33,9 +33,12 @@ find_rust_edition() {
   local dir
   dir="$(dirname "$1")"
   while [ "$dir" != "/" ]; do
+    # A member crate says `edition.workspace = true`; keep climbing to the
+    # workspace root, or rustfmt falls back to edition 2015.
     if [ -f "$dir/Cargo.toml" ]; then
-      sed -n 's/^edition[[:space:]]*=[[:space:]]*"\([0-9]*\)".*/\1/p' "$dir/Cargo.toml" | head -1
-      return 0
+      local edition
+      edition=$(sed -n 's/^edition[[:space:]]*=[[:space:]]*"\([0-9]*\)".*/\1/p' "$dir/Cargo.toml" | head -1)
+      [ -n "$edition" ] && echo "$edition" && return 0
     fi
     dir="$(dirname "$dir")"
   done

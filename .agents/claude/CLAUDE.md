@@ -48,9 +48,12 @@ verify → ship**.
 - Large multi-file tasks: prefer the `big-feature` workflow
   (`~/.claude/workflows/big-feature.js`) over one long monolithic session.
 - Every project gets a CLAUDE.md bootstrapped from
-  `~/.claude/templates/project-claude.md` (architecture map + don't-recreate
-  inventory). Read it — especially the don't-recreate table — before creating
-  any new file, helper, or type.
+  `~/.claude/templates/project-claude.md`: under 200 lines, only what Claude
+  cannot derive from the code. Area-specific rules go in `.claude/rules/` with
+  `paths:` frontmatter so they load on demand.
+- Before creating a file, helper, or type, have an `Explore` subagent on
+  `haiku` search for an existing one. No inventory table: it rots, and the
+  search keeps the main context clean.
 
 @~/.claude/rules/prose.md
 @~/.claude/rules/coding.md
