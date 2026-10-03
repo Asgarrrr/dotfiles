@@ -1,6 +1,7 @@
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 DOTFILES_DIR="$HOME/dotfiles"
 export STARSHIP_CONFIG="$DOTFILES_DIR/.config/starship.toml"
+[[ -f "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"  # machine-local secrets, never committed
 
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME=""

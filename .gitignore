@@ -14,3 +14,8 @@
 
 # Machine-local Claude permissions (per-session allowlist)
 .claude/settings.local.json
+
+# Machine-local secrets
+.zshrc.local
+.env
+.env.*
