@@ -19,9 +19,9 @@ verify → ship**.
 
 - Read before write. Glob/Grep before assuming. Fuzzy memory of a file → re-read it.
 - Delegate context-heavy work to subagents, always with three fields: goal,
-  allowed tools, return-format. Quality beats cost: when in doubt, use the
-  strong model. Downgrade to `sonnet`/`haiku` only for truly mechanical work
-  (search, bulk reads, rote edits) whose output is cheap to verify.
+  allowed tools, return-format. Pick the model by role: `opus` for planning,
+  judgment and review; `sonnet` to implement a contract that already settles
+  the design, or for mechanical work; `haiku` for search. Unsure → `opus`.
 - ~150k tokens is the working ceiling: compact, `/handoff`, or fresh session
   before crossing it. Say so if context is drifting.
 - An approach that failed twice → stop and flag it; suggest rewinding instead
@@ -30,9 +30,12 @@ verify → ship**.
 ## Delegation
 
 - Localized change (1-2 files, no architectural decision): handle it directly.
-- Otherwise: use `architect` to split the work; it delegates implementation.
-- `architect` defaults to PLAN mode: it returns the decomposition and stops.
-  Nothing is implemented before you approve it. Relaunch with an explicit go.
+- Otherwise: propose `/big-feature` with `task` and `dir` filled in, and let the
+  user launch it. Intent or design still open → propose `/brainstorm` first.
+- Never spawn a long-lived subagent that orchestrates a slice or a feature.
+  Orchestration belongs to the workflow script; each subagent does one short step.
+- User declines the workflow → `architect`, which defaults to PLAN mode: it
+  returns the decomposition and stops. Relaunch with an explicit go.
 - Never delegate a task whose result you couldn't verify yourself.
 - Uncertain design, hard-to-reverse choice → `advisor` before committing.
 - Unconfirmed library, version, or API → `researcher` before writing against it.
@@ -45,8 +48,8 @@ verify → ship**.
 
 ## Orchestration
 
-- Large multi-file tasks: prefer the `big-feature` workflow
-  (`~/.claude/workflows/big-feature.js`) over one long monolithic session.
+- One `big-feature` run per fresh session. To continue an approved plan in a
+  new session, pass its slices back as `args.slices` with `go: true`.
 - Every project gets a CLAUDE.md bootstrapped from
   `~/.claude/templates/project-claude.md`: under 200 lines, only what Claude
   cannot derive from the code. Area-specific rules go in `.claude/rules/` with

@@ -108,11 +108,11 @@
     "refreshInterval": 60
   },
   "enabledPlugins": {
-    "sentrux@sentrux-marketplace": true,
+    "sentrux@sentrux-marketplace": false,
     "clangd-lsp@claude-plugins-official": true,
-    "paper-desktop@paper": true,
+    "paper-desktop@paper": false,
     "frontend-design@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": false,
     "code-review@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true
   },
