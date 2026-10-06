@@ -6,8 +6,8 @@ export const meta = {
     { title: 'Explore', detail: 'three cheap readers map conventions, existing code, and the test surface', model: 'sonnet' },
     { title: 'Vet', detail: 'dependency check, plus a council answering one design question blind; a synthesiser compares by content, then any contested concern goes back to the seat that missed it' },
     { title: 'Plan', detail: 'walking skeleton first, then slices by added dimension — architecture first, content progressive', model: 'opus' },
-    { title: 'Implement', detail: 'sequential slices, test-first, session model' },
-    { title: 'Review', detail: 'adversarial review of the full diff, then fixes, then an independent recheck' },
+    { title: 'Implement', detail: 'sequential slices, test-first: sonnet on low-risk slices with a contract, opus otherwise; a peer review per slice, escalation to opus on failure' },
+    { title: 'Review', detail: 'adversarial review of the full diff, a red team on high-risk slices, then fixes, then an independent recheck' },
   ],
 }
 
@@ -443,12 +443,21 @@ const PLAN = {
             description: 'the test IN THIS SLICE that fails if the structure is deleted; "none" when structure is "none". Not a later slice — a later slice means speculative, cut it.',
           },
           approach: { type: 'string' },
+          contract: {
+            type: 'string',
+            description: 'every design decision the implementer must not take alone: exact signatures and types, where each piece lives, invariants, edge cases and their expected behaviour',
+          },
+          risk: {
+            type: 'string',
+            enum: ['low', 'high'],
+            description: 'high when a bug here corrupts state, breaks a core invariant, touches persistence, security, concurrency or determinism, or the contract cannot pin the design',
+          },
           verification: {
             type: 'string',
             description: 'exact command + expected outcome, run-able today. Must be able to fail against a plausibly-wrong implementation — "it compiles" is not verification.',
           },
         },
-        required: ['title', 'files', 'structure', 'structureJustification', 'approach', 'verification'],
+        required: ['title', 'files', 'structure', 'structureJustification', 'approach', 'contract', 'risk', 'verification'],
       },
     },
   },
@@ -494,7 +503,11 @@ const plan = givenSlices ? { slices: givenSlices } : await agent(
   `slice, no generality whose second use is hypothetical rather than named in a later ` +
   `slice of THIS plan. Extension points are earned by a named second consumer, ` +
   `never anticipated.\n` +
-  `7. Reuse everything the notes say already exists. Recreate nothing.\n\n` +
+  `7. Reuse everything the notes say already exists. Recreate nothing.\n` +
+  `8. Every slice carries a "contract" that settles its design: an implementer who ` +
+  `follows it takes no design decision of its own. Mark "risk" high when a bug in the ` +
+  `slice would corrupt state or break a core invariant, or when you cannot pin its ` +
+  `design in the contract. High-risk slices get the strong implementer and a red team.\n\n` +
 
   `For each slice state, in "structure", what module boundary or data structure it ` +
   `establishes or generalizes, and in "structureJustification" the same-slice test that ` +
@@ -598,37 +611,78 @@ const SLICE_RESULT = {
   },
   required: ['title', 'status', 'command', 'exitCode', 'output'],
 }
+const SLICE_REVIEW = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['pass', 'fail'] },
+    issues: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['verdict', 'issues'],
+}
+const sliceBrief = (s, i) =>
+  `In ${dir}, implement slice ${i + 1}/${plan.slices.length} of: ${task}\n\n` +
+  `Slice: ${s.title}\nFiles: ${(s.files || []).join(', ')}\nApproach: ${s.approach}\n` +
+  `Structure this slice establishes: ${s.structure || 'none'}\n` +
+  `Contract: ${s.contract || 'none given — follow the approach and the codebase conventions'}\n` +
+  `Already completed: ${done.map(d => d.title).join('; ') || 'nothing yet'}\n\n` +
+  `The contract is the design. Take no design decision it does not settle: if the slice ` +
+  `needs one, return status "blocked" and name the decision in the output.\n` +
+  `Method: write the failing test FIRST, then the minimal code that passes it. ` +
+  `Reuse existing helpers — recreate nothing. Match local conventions exactly. ` +
+  `No dead code, no commented-out blocks, no comments narrating the diff. ` +
+  `Build exactly the structure named above — no interface with one implementer, ` +
+  `no field or parameter unread by code in this slice, no extension point whose ` +
+  `second consumer is hypothetical. Structure beyond what this slice's test exercises ` +
+  `is speculative: leave it out.\n` +
+  `Then run: ${s.verification}\n` +
+  `Prefer the project's quiet reporter when it has one (--reporter=dot, -q, --silent) ` +
+  `and scope the run to the tests this slice touches — a full verbose suite buries the ` +
+  `one line that matters.\n` +
+  `Return the verification command, its exit code, and the last lines of output. ` +
+  `If verification still fails after 3 attempts, return status "blocked" with the real error — never fake success.`
+const reviewSlice = (s, i, attempt) => agent(
+  `In ${dir}, review slice ${i + 1} ("${s.title}") of: ${task}\n` +
+  `Read the uncommitted changes to these files: ${(s.files || []).join(', ')}.\n` +
+  `Contract the slice had to honour:\n${s.contract || s.approach}\n` +
+  `Fail the slice only for: a contract point not honoured, a design decision taken that the ` +
+  `contract did not settle, a test that would pass against a plausibly-wrong implementation, ` +
+  `or code outside the slice's files. Verify each issue against the code. Style nits are not issues.`,
+  // The attempt in the label keeps a resumed run from replaying the first verdict.
+  { label: `peer:${(s.title || `slice ${i + 1}`).slice(0, 30)}:${attempt}`, phase: 'Implement',
+    model: 'sonnet', effort: 'medium', schema: SLICE_REVIEW })
+
 const done = []
 for (const [i, s] of plan.slices.entries()) {
-  const r = await agent(
-    `In ${dir}, implement slice ${i + 1}/${plan.slices.length} of: ${task}\n\n` +
-    `Slice: ${s.title}\nFiles: ${(s.files || []).join(', ')}\nApproach: ${s.approach}\n` +
-    `Structure this slice establishes: ${s.structure || 'none'}\n` +
-    `Already completed: ${done.map(d => d.title).join('; ') || 'nothing yet'}\n\n` +
-    `Method: write the failing test FIRST, then the minimal code that passes it. ` +
-    `Reuse existing helpers — recreate nothing. Match local conventions exactly. ` +
-    `No dead code, no commented-out blocks, no comments narrating the diff. ` +
-    `Build exactly the structure named above — no interface with one implementer, ` +
-    `no field or parameter unread by code in this slice, no extension point whose ` +
-    `second consumer is hypothetical. Structure beyond what this slice's test exercises ` +
-    `is speculative: leave it out.\n` +
-    `Then run: ${s.verification}\n` +
-    `Prefer the project's quiet reporter when it has one (--reporter=dot, -q, --silent) ` +
-    `and scope the run to the tests this slice touches — a full verbose suite buries the ` +
-    `one line that matters.\n` +
-    `Return the verification command, its exit code, and the last lines of output. ` +
-    `If verification still fails after 3 attempts, return status "blocked" with the real error — never fake success.`,
-    // Pinned, not inherited: writing code is opus work, and which model does it
-    // must not depend on whatever /model the caller happens to be sitting on.
-    { label: `slice:${(s.title || `slice ${i + 1}`).slice(0, 30)}`, phase: 'Implement',
-      model: 'opus', effort: 'high', schema: SLICE_RESULT })
+  // Sonnet only implements what a contract has already designed; anything else stays on opus.
+  // Slices from plans approved before contract/risk existed carry neither, and stay on opus.
+  const cheap = s.risk === 'low' && Boolean(s.contract)
+  const label = `slice:${(s.title || `slice ${i + 1}`).slice(0, 30)}`
+  let model = cheap ? 'sonnet' : 'opus'
+  let r = await agent(sliceBrief(s, i),
+    { label, phase: 'Implement', model, effort: 'high', schema: SLICE_RESULT })
+  if (r && r.status === 'done') {
+    let peer = await reviewSlice(s, i, 1)
+    if (peer && peer.verdict === 'fail') {
+      log(`slice ${i + 1} failed peer review (${peer.issues.length} issue(s)) — escalating to opus`)
+      model = 'opus'
+      r = await agent(
+        `${sliceBrief(s, i)}\n\nA previous attempt is already in the working tree. ` +
+        `A peer review rejected it for:\n${peer.issues.map(x => `- ${x}`).join('\n')}\n` +
+        `Fix these issues in place, then re-run the verification.`,
+        { label: `${label}:retry`, phase: 'Implement', model: 'opus', effort: 'high', schema: SLICE_RESULT })
+      peer = r && r.status === 'done' ? await reviewSlice(s, i, 2) : peer
+      if (r && r.status === 'done' && peer && peer.verdict === 'fail') {
+        r = { ...r, status: 'blocked', output: `peer review still failing: ${peer.issues.join('; ')}` }
+      }
+    }
+  }
   if (!r || r.status === 'blocked') {
     done.push(r || { title: s.title, status: 'blocked', command: '', exitCode: -1, output: 'agent lost' })
     log(`slice ${i + 1} blocked — stopping before building on a broken base`)
     break
   }
   done.push(r)
-  log(`slice ${i + 1}/${plan.slices.length} done: ${s.title}`)
+  log(`slice ${i + 1}/${plan.slices.length} done (${model}): ${s.title}`)
   if (done.length >= until && i + 1 < plan.slices.length) {
     log(`stopping after ${done.length} slice(s) — read the diff, then relaunch to continue`)
     break
@@ -646,6 +700,7 @@ const partial = !blocked && unfinished.length > 0
 
 phase('Review')
 let review = null
+let red = null
 let recheck = null
 // Review the whole diff, or a paused run's slices so far. Never a broken tree.
 if (done.length && done.every(d => d.status === 'done')) {
@@ -690,13 +745,40 @@ if (done.length && done.every(d => d.status === 'done')) {
         },
         required: ['findings'],
       } })
+  // Red team only where a missed defect is expensive: the slices the planner marked high.
+  const risky = plan.slices.slice(0, done.length).filter(s => s.risk !== 'low')
+  red = risky.length ? await agent(
+    `In ${dir}, you are the red team on the uncommitted changes implementing: ${task}.\n` +
+    `Attack these high-risk slices:\n` +
+    risky.map(s => `- ${s.title} (files: ${(s.files || []).join(', ')})\n  contract: ${s.contract || s.approach}`).join('\n') +
+    `\nFind inputs, states or sequences that break the contract or a project invariant. ` +
+    `For each finding, give the concrete scenario and, when you can, a test that fails today. ` +
+    `Report only defects you confirmed against the code. No style findings. An empty list is a valid result.`,
+    { label: 'red', phase: 'Review', model: 'opus', effort: 'high',
+      schema: {
+        type: 'object',
+        properties: {
+          findings: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { file: { type: 'string' }, issue: { type: 'string' } },
+              required: ['file', 'issue'],
+            },
+          },
+        },
+        required: ['findings'],
+      } }) : null
+  if (red) log(`red team: ${red.findings.length} finding(s) on ${risky.length} high-risk slice(s)`)
   const mustFix = ((review && review.findings) || []).filter(f => f.severity === 'must-fix')
+    .concat(((red && red.findings) || []).map(f => ({ ...f, severity: 'must-fix' })))
   if (mustFix.length) {
     log(`${mustFix.length} must-fix findings — applying fixes`)
     await agent(
       `In ${dir}, fix these review findings with the smallest possible diff, then re-run the project's test command and report command + exit code + output tail:\n` +
       mustFix.map(f => `- ${f.file}: ${f.issue}`).join('\n'),
-      { label: 'fix', phase: 'Review', model: 'opus', effort: 'high' })
+      // Findings arrive already diagnosed, and the recheck below verifies the result.
+      { label: 'fix', phase: 'Review', model: 'sonnet', effort: 'high' })
 
     // The fixer grades its own work. Confirm against the tree before believing it.
     recheck = await agent(
@@ -742,6 +824,7 @@ return {
   vetting: vetting.length ? vetting : 'nothing flagged',
   vetSources: unverified ? `INCOMPLETE — ${vetSources.length} source(s), a dimension went unverified` : vetSources,
   review: (review && review.findings) || [],
+  red: red ? red.findings : undefined,
   recheck,
   next: blocked
     ? `Slice ${completed + 1} blocked; ${Math.max(0, unfinished.length - 1)} further slice(s) never attempted. Read the failure, fix the brief or the code, then relaunch.`
