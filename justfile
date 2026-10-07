@@ -30,6 +30,7 @@ ai-link:
   mkdir -p "$HOME/.agents/skills" "$HOME/.claude/skills" "$HOME/.codex"
   ln -sf "$dotfiles_dir/.agents/README.md" "$HOME/.agents/README.md"
   ln -sf "$dotfiles_dir/.agents/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+  ln -sf "$dotfiles_dir/.agents/claude/RTK.md" "$HOME/.claude/RTK.md"
   ln -sf "$dotfiles_dir/.agents/claude/settings.json" "$HOME/.claude/settings.json"
   ln -sf "$dotfiles_dir/.agents/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
   ln -sfn "$dotfiles_dir/.agents/claude/hooks" "$HOME/.claude/hooks"
@@ -84,7 +85,7 @@ ai-doctor:
   echo "commands:"
   for c in bun codex claude; do check_cmd "$c"; done
   echo "global config:"
-  for l in "$HOME/.agents/README.md" "$HOME/.claude/CLAUDE.md" "$HOME/.claude/settings.json" "$HOME/.claude/hooks" "$HOME/.claude/rules"; do check_link "$l"; done
+  for l in "$HOME/.agents/README.md" "$HOME/.claude/CLAUDE.md" "$HOME/.claude/RTK.md" "$HOME/.claude/settings.json" "$HOME/.claude/hooks" "$HOME/.claude/rules"; do check_link "$l"; done
   if [[ -f "$HOME/.codex/config.toml" ]]; then echo "  ok   $HOME/.codex/config.toml"; ok=$((ok+1)); else echo "  MISS $HOME/.codex/config.toml"; fail=$((fail+1)); fi
   echo "skills:"
   shopt -s nullglob
