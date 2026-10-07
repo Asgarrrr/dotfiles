@@ -37,7 +37,7 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "opus",
+  "model": "sonnet",
   "disableClaudeAiConnectors": true,
   "hooks": {
     "PreToolUse": [
@@ -138,6 +138,7 @@
   },
   "feedbackSurveyRate": 0,
   "effortLevel": "high",
+  "autoCompactWindow": 200000,
   "showClearContextOnPlanAccept": true,
   "tui": "fullscreen",
   "voice": {
@@ -148,6 +149,5 @@
   "theme": "dark",
   "preferredNotifChannel": "ghostty",
   "agentPushNotifEnabled": false,
-  "skipAutoPermissionPrompt": true,
-  "autoCompactWindow": 200000
+  "skipAutoPermissionPrompt": true
 }

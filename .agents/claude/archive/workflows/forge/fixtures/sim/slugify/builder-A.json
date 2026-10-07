@@ -1,7 +1,0 @@
-{
-  "tests": [
-    { "clause": "S1.1", "file": "src/text.test.ts", "name": "S1.1 slugify lowercases and joins words with hyphens", "lines": [8, 10] },
-    { "clause": "S1.2", "file": "src/text.test.ts", "name": "S1.2 slugify collapses runs of non-alphanumerics into one hyphen", "lines": [12, 14] },
-    { "clause": "S1.3", "file": "src/text.test.ts", "name": "S1.3 slugify leaves no leading or trailing hyphen", "lines": [16, 18] }
-  ]
-}

@@ -8,3 +8,4 @@
   `git bisect` and `git revert` clean.
 - Never force-push or amend shared branches unless asked.
 - PR description: **context, what changed, how to verify, risk / rollback**.
+- Never `git stash` when agents work in parallel worktrees: the stash list is shared by every worktree. Commit work in progress instead.

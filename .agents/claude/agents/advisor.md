@@ -1,7 +1,7 @@
 ---
 name: advisor
 description: Challenges a design or an architectural decision. Searches the web for prior art, failure reports, and dissenting opinions. Use before committing to a hard-to-reverse choice.
-tools: Read, Grep, Glob, WebSearch, WebFetch, mcp__deepwiki__ask_question, mcp__deepwiki__read_wiki_structure, mcp__deepwiki__read_wiki_contents
+tools: Read, Grep, Glob, WebSearch, WebFetch, mcp__deepwiki__ask_wiki_question, mcp__deepwiki__read_wiki_structure, mcp__deepwiki__read_wiki_contents
 model: opus
 effort: xhigh
 ---
