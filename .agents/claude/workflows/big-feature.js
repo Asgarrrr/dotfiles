@@ -33,7 +33,17 @@ if (!task) throw new Error('big-feature needs a task: args = {task: "...", dir: 
 // same-session only, so without this a fresh session must re-plan — and a re-plan
 // is a NEW plan, not the one that was approved.
 // gpt: add a blind second opinion on the design from GPT via the codex CLI.
-const useGpt = opts.gpt === true || opts.gpt === 'true'
+// true or 'sol' = workhorse tier (gpt-6.1-sol is refused on a ChatGPT account); 'astra' = frontier tier, for hard-to-reverse designs.
+const GPT_TIERS = {
+  sol: { model: 'gpt-6-sol', effort: 'high' },
+  astra: { model: 'gpt-6-astra', effort: 'xhigh' },
+}
+const gptOpt = opts.gpt === true || opts.gpt === 'true' ? 'sol' : opts.gpt
+const gptTier = GPT_TIERS[gptOpt] || null
+if (opts.gpt && opts.gpt !== 'false' && !gptTier) {
+  throw new Error(`big-feature: args.gpt must be true, "sol" or "astra" — got ${JSON.stringify(opts.gpt)}`)
+}
+const useGpt = gptTier !== null
 // fable: escalation for novel or large multi-agent work — plans on fable, seats it
 // on the council. Opus 5.5 matches it on most tasks at 2.5x less per token.
 const escalate = opts.fable === true || opts.fable === 'true'
@@ -104,6 +114,28 @@ const VET = {
   },
   required: ['sourcesConsulted', 'findings'],
 }
+const REBUTTAL = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['real', 'refuted', 'unresolved'] },
+    reasoning: { type: 'string', description: 'one or two sentences, citing code or a source' },
+  },
+  required: ['verdict', 'reasoning'],
+}
+// codex --output-schema needs a closed schema: additionalProperties:false on every object.
+const closeSchema = s => s.type === 'object'
+  ? { ...s, additionalProperties: false, properties: Object.fromEntries(Object.entries(s.properties).map(([k, v]) => [k, closeSchema(v)])) }
+  : s.type === 'array' ? { ...s, items: closeSchema(s.items) } : s
+// The seat agent only relays: GPT's answer comes back as a schema-checked file, so
+// the wrapper has nothing to paraphrase. mktemp keeps parallel seats from sharing files.
+const codexCall = (schema, question) =>
+  `Run this from ${dir}. Replace <the question> with the question below, verbatim:\n\n` +
+  `  d=$(mktemp -d) && cat > "$d/schema.json" <<'SCHEMA'\n${JSON.stringify(closeSchema(schema))}\nSCHEMA\n` +
+  `  codex exec -C ${dir} -s read-only --ephemeral -m ${gptTier.model} -c model_reasoning_effort=${gptTier.effort} --output-schema "$d/schema.json" -o "$d/answer.json" - <<'PROMPT'\n  <the question>\n  PROMPT\n` +
+  `  cat "$d/answer.json"\n\n` +
+  `The -m flag is required: without it codex uses its configured default, which may ` +
+  `not be a second family at all. The cat output is GPT's answer.\n` +
+  `--- question to relay verbatim ---\n${question}\n--- end ---\n\n`
 // One question, asked to two model families in parallel. Identical wording is the
 // point: if they are asked different things, divergence tells you nothing.
 const DESIGN_QUESTION =
@@ -152,11 +184,7 @@ const vetRaw = givenSlices ? [] : (await parallel([
   // Opt in with args.gpt — it costs a codex round-trip on the critical path.
   ...(useGpt ? [() => agent(
     `Ask GPT this question through the codex CLI, then report what it said.\n\n` +
-    `Run it from ${dir} so GPT can read the code itself:\n` +
-    `  codex exec -s read-only -m gpt-5.6-luna - <<'PROMPT'\n  <the question below>\n  PROMPT\n\n` +
-    `The -m flag is required: without it codex uses its configured default, which may ` +
-    `be a Claude-family model — and then this seat is not a second family at all.\n` +
-    `--- question to relay verbatim ---\n${DESIGN_QUESTION}\n--- end ---\n\n` +
+    codexCall(VET, DESIGN_QUESTION) +
     `Report GPT's position in ITS terms, not yours. Put each concern it raised in ` +
     `findings, with evidence naming what GPT cited. In sourcesConsulted, list what ` +
     `GPT actually consulted plus "codex:gpt". If codex fails, return empty findings ` +
@@ -281,20 +309,13 @@ if (!givenSlices && seatsThatRan.length >= 2) {
       `Refuting is as valuable as conceding. Do not agree out of deference, and do not ` +
       `dig in to save face — the caller needs the truth about this one claim.` +
       (seat === 'council:gpt'
-        ? `\n\nRelay this to GPT and report ITS verdict, not yours:\n` +
-          `  codex exec -s read-only -m gpt-5.6-luna - <<'PROMPT'\n  <the question above>\n  PROMPT\n` +
+        ? `\n\nRelay everything above this line to GPT and report ITS verdict, not yours.\n` +
+          codexCall(REBUTTAL, 'the concern, context and instructions above, verbatim') +
           `If codex fails, return verdict "unresolved" and say codex failed.`
         : ''),
       { label: `rebut:${seat.replace('council:', '')}:${c.claim.slice(0, 18)}`, phase: 'Vet',
         model: SEAT_MODEL[seat], effort: seat === 'council:gpt' ? 'medium' : 'high',
-        schema: {
-          type: 'object',
-          properties: {
-            verdict: { type: 'string', enum: ['real', 'refuted', 'unresolved'] },
-            reasoning: { type: 'string', description: 'one or two sentences, citing code or a source' },
-          },
-          required: ['verdict', 'reasoning'],
-        } }).then(v => ({ claim: c.claim, seat, verdict: v && v.verdict, reasoning: v && v.reasoning })))))
+        schema: REBUTTAL }).then(v => ({ claim: c.claim, seat, verdict: v && v.verdict, reasoning: v && v.reasoning })))))
       .filter(Boolean)
 
     // Several seats may have missed one concern. Refuted by any of them beats upheld:
