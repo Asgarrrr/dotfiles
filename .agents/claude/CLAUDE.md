@@ -63,6 +63,5 @@ verify → ship**.
 @~/.claude/rules/dependencies.md
 @~/.claude/rules/verification.md
 @~/.claude/rules/git.md
-@~/.claude/rules/memory.md
 
 @RTK.md
