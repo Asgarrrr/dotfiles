@@ -37,20 +37,81 @@ ai-link:
   ln -sfn "$dotfiles_dir/.agents/claude/rules" "$HOME/.claude/rules"
   ln -sf "$dotfiles_dir/.agents/codex/config.toml" "$HOME/.codex/config.toml"
 
+  # ~/.agents/skills is the catalog; only the skills named in skills.txt load
+  # globally, the rest are switched on per project with `just skill-on`.
   shopt -s nullglob
   for skill in "$dotfiles_dir"/.agents/skills/*; do
     [[ -d "$skill" ]] || continue
     name="$(basename "$skill")"
     home_skill="$HOME/.agents/skills/$name"
-    claude_skill="$HOME/.claude/skills/$name"
 
     if [[ -e "$home_skill" && ! -L "$home_skill" ]]; then
       mv "$home_skill" "$HOME/.agents/skills/${name}.pre-dotfiles-$stamp"
     fi
 
     ln -sfn "$skill" "$home_skill"
-    ln -sfn "../../.agents/skills/$name" "$claude_skill"
   done
+
+  for link in "$HOME"/.claude/skills/*; do
+    [[ -L "$link" ]] || continue
+    grep -qxF "$(basename "$link")" "$dotfiles_dir/.agents/claude/skills.txt" || rm "$link"
+  done
+  while read -r name; do
+    [[ -n "$name" ]] || continue
+    if [[ -e "$HOME/.agents/skills/$name" ]]; then
+      ln -sfn "../../.agents/skills/$name" "$HOME/.claude/skills/$name"
+    else
+      echo "  not in catalog: $name" >&2
+    fi
+  done < "$dotfiles_dir/.agents/claude/skills.txt"
+
+# List the skill catalog: g = loaded globally, p = loaded in the current directory's project.
+skills:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  shopt -s nullglob
+  cd "{{invocation_directory()}}"
+  for skill in "$HOME"/.agents/skills/*; do
+    name="$(basename "$skill")"
+    [[ "$name" == *.pre-dotfiles-* ]] && continue
+    g=" "; p=" "
+    [[ -e "$HOME/.claude/skills/$name" ]] && g="g"
+    [[ -e ".claude/skills/$name" && "$PWD" != "$HOME" ]] && p="p"
+    echo "  $g$p $name"
+  done
+
+# Load a catalog skill globally, or in the current directory's project.
+skill-on name scope="global":
+  #!/usr/bin/env bash
+  set -euo pipefail
+  name="{{name}}"; list="{{dotfiles_dir}}/.agents/claude/skills.txt"
+  [[ -e "$HOME/.agents/skills/$name" ]] || { echo "not in catalog: $name (see just skills)" >&2; exit 1; }
+  case "{{scope}}" in
+    global)
+      grep -qxF "$name" "$list" || { echo "$name" >> "$list"; sort -o "$list" "$list"; }
+      ln -sfn "../../.agents/skills/$name" "$HOME/.claude/skills/$name" ;;
+    project)
+      cd "{{invocation_directory()}}"
+      mkdir -p .claude/skills
+      ln -sfn "$HOME/.agents/skills/$name" ".claude/skills/$name" ;;
+    *) echo "scope must be global or project" >&2; exit 1 ;;
+  esac
+  echo "on ({{scope}}): $name"
+
+# Unload a skill; it stays in the catalog.
+skill-off name scope="global":
+  #!/usr/bin/env bash
+  set -euo pipefail
+  name="{{name}}"; list="{{dotfiles_dir}}/.agents/claude/skills.txt"
+  case "{{scope}}" in
+    global)
+      grep -vxF "$name" "$list" > "$list.tmp" || true; mv "$list.tmp" "$list"
+      target="$HOME/.claude/skills/$name" ;;
+    project) target="{{invocation_directory()}}/.claude/skills/$name" ;;
+    *) echo "scope must be global or project" >&2; exit 1 ;;
+  esac
+  if [[ -L "$target" ]]; then rm "$target"; elif [[ -e "$target" ]]; then echo "not a link, left alone: $target" >&2; exit 1; fi
+  echo "off ({{scope}}): $name"
 
 brew:
   brew bundle --file "{{dotfiles_dir}}/Brewfile"
@@ -93,8 +154,11 @@ ai-doctor:
     [[ -d "$skill" ]] || continue
     name="$(basename "$skill")"
     check_link "$HOME/.agents/skills/$name"
-    check_link "$HOME/.claude/skills/$name"
   done
+  echo "global skills:"
+  while read -r name; do
+    [[ -n "$name" ]] && check_link "$HOME/.claude/skills/$name"
+  done < "{{dotfiles_dir}}/.agents/claude/skills.txt"
   echo "—"
   echo "passed: $ok  failed: $fail"
   [[ $fail -eq 0 ]]
