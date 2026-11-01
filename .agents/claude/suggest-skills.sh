@@ -94,10 +94,12 @@ fi
 
 if [[ "$ans" =~ ^[Yy]$ ]]; then
   mkdir -p "$PROJECT_DIR/.claude"
-  [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+  [ -s "$SETTINGS" ] || echo '{}' > "$SETTINGS"
   tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
   jq --args '.skillOverrides += ($ARGS.positional | map({(.): "on"}) | add)' "${new[@]}" < "$SETTINGS" > "$tmp"
-  mv "$tmp" "$SETTINGS"
+  # cat instead of mv keeps the file's mode; mktemp files are 600.
+  cat "$tmp" > "$SETTINGS"
   echo "Enabled in $SETTINGS (new Claude Code session needed to see them)"
 else
   echo "Skipped."
