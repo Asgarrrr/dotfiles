@@ -1,9 +1,10 @@
 #!/bin/bash
 # Detects stack signals in a project (package.json deps, config files, code
-# patterns) and links the matching pool skills via pick-skill.sh — so you
-# never have to know or remember which skill name maps to which stack.
+# patterns) and switches the matching skills on in the project's
+# .claude/settings.local.json. Stack skills are off globally via skillOverrides
+# in settings.json; the project-level "on" wins over the user-level "off".
 # Usage: suggest-skills.sh [project-dir] [--yes]
-#   --yes / -y : link without prompting (non-interactive use, e.g. from the
+#   --yes / -y : enable without prompting (non-interactive use, e.g. from the
 #                /suggest-skills command)
 set -euo pipefail
 
@@ -17,7 +18,7 @@ for arg in "$@"; do
 done
 
 PROJECT_DIR="$(cd "$PROJECT_ARG" && pwd)"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SETTINGS="$PROJECT_DIR/.claude/settings.local.json"
 
 has_dep() {
   [ -f "$PROJECT_DIR/package.json" ] && grep -q "\"$1" "$PROJECT_DIR/package.json"
@@ -66,14 +67,18 @@ fi
 
 IFS=$'\n' unique=($(printf '%s\n' "${matched[@]}" | sort -u)); unset IFS
 
-# Drop anything already linked — only show/confirm genuinely new suggestions.
+is_on() {
+  [ -f "$SETTINGS" ] && [ "$(jq -r --arg n "$1" '.skillOverrides[$n] // empty' "$SETTINGS")" = "on" ]
+}
+
+# Drop anything already enabled — only show/confirm genuinely new suggestions.
 new=()
 for name in "${unique[@]}"; do
-  [ -L "$PROJECT_DIR/.claude/skills/$name" ] || new+=("$name")
+  is_on "$name" || new+=("$name")
 done
 
 if [ "${#new[@]}" -eq 0 ]; then
-  echo "All detected skills are already linked in $PROJECT_DIR."
+  echo "All detected skills are already enabled in $PROJECT_DIR."
   exit 0
 fi
 
@@ -84,13 +89,16 @@ echo
 if [ "$YES" -eq 1 ]; then
   ans=y
 else
-  read -r -p "Link these into $PROJECT_DIR/.claude/skills/ ? [y/N] " ans || ans=n
+  read -r -p "Enable these in $SETTINGS ? [y/N] " ans || ans=n
 fi
 
 if [[ "$ans" =~ ^[Yy]$ ]]; then
-  for name in "${new[@]}"; do
-    "$SCRIPT_DIR/pick-skill.sh" "$name" "$PROJECT_DIR"
-  done
+  mkdir -p "$PROJECT_DIR/.claude"
+  [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+  tmp="$(mktemp)"
+  jq --args '.skillOverrides += ($ARGS.positional | map({(.): "on"}) | add)' "${new[@]}" < "$SETTINGS" > "$tmp"
+  mv "$tmp" "$SETTINGS"
+  echo "Enabled in $SETTINGS (new Claude Code session needed to see them)"
 else
   echo "Skipped."
 fi
