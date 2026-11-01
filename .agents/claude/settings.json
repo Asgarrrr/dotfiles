@@ -144,6 +144,33 @@
       }
     }
   },
+  "skillOverrides": {
+    "agents-sdk": "off",
+    "better-auth-best-practices": "off",
+    "better-auth-security-best-practices": "off",
+    "cloudflare": "off",
+    "cloudflare-email-service": "off",
+    "cloudflare-one": "off",
+    "cloudflare-one-migrations": "off",
+    "context7-mcp": "off",
+    "create-auth-skill": "off",
+    "durable-objects": "off",
+    "email-and-password-best-practices": "off",
+    "organization-best-practices": "off",
+    "sandbox-sdk": "off",
+    "shadcn": "off",
+    "test-deslop": "off",
+    "turnstile-spin": "off",
+    "two-factor-authentication-best-practices": "off",
+    "use-railway": "off",
+    "vercel-composition-patterns": "off",
+    "vercel-react-best-practices": "off",
+    "vercel-react-view-transitions": "off",
+    "web-design-guidelines": "off",
+    "web-perf": "off",
+    "workers-best-practices": "off",
+    "wrangler": "off"
+  },
   "feedbackSurveyRate": 0,
   "effortLevel": "high",
   "modelSettings": {
