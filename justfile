@@ -78,7 +78,7 @@ ai-doctor:
   check_cmd() { if command -v "$1" >/dev/null 2>&1; then echo "  ok   $1"; ok=$((ok+1)); else echo "  MISS $1"; fail=$((fail+1)); fi; }
   check_link() { if [[ -L "$1" ]]; then echo "  ok   $1"; ok=$((ok+1)); else echo "  MISS $1"; fail=$((fail+1)); fi; }
   echo "commands:"
-  for c in bun codex claude; do check_cmd "$c"; done
+  for c in bun codex claude jq; do check_cmd "$c"; done
   echo "global config:"
   for l in "$HOME/.agents/README.md" "$HOME/.claude/CLAUDE.md" "$HOME/.claude/RTK.md" "$HOME/.claude/settings.json" "$HOME/.claude/hooks" "$HOME/.claude/rules"; do check_link "$l"; done
   if [[ -f "$HOME/.codex/config.toml" ]]; then echo "  ok   $HOME/.codex/config.toml"; ok=$((ok+1)); else echo "  MISS $HOME/.codex/config.toml"; fail=$((fail+1)); fi
@@ -87,9 +87,13 @@ ai-doctor:
   for dir in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
     if [[ "$(readlink "$dir")" == "$pool" ]]; then echo "  ok   $dir"; ok=$((ok+1)); else echo "  MISS $dir -> $pool"; fail=$((fail+1)); fi
   done
-  for name in $(jq -r '.skillOverrides // {} | keys[]' "{{dotfiles_dir}}/.agents/claude/settings.json"); do
-    [[ -d "$pool/$name" ]] || { echo "  MISS skillOverrides names a skill not in the pool: $name"; fail=$((fail+1)); }
-  done
+  if names="$(jq -r '.skillOverrides // {} | keys[]' "{{dotfiles_dir}}/.agents/claude/settings.json")"; then
+    for name in $names; do
+      [[ -d "$pool/$name" ]] || { echo "  MISS skillOverrides names a skill not in the pool: $name"; fail=$((fail+1)); }
+    done
+  else
+    echo "  MISS cannot read skillOverrides from settings.json"; fail=$((fail+1))
+  fi
   echo "—"
   echo "passed: $ok  failed: $fail"
   [[ $fail -eq 0 ]]
