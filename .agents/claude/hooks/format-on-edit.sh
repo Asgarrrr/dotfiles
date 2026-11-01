@@ -49,10 +49,12 @@ case "$EXT" in
   js|jsx|ts|tsx|css|scss|json|html|md|yaml|yml|graphql)
     PRETTIER=$(find_local_bin "$FILE" prettier 2>/dev/null)
     BIOME=$(find_local_bin "$FILE" biome 2>/dev/null)
-    if [ -n "$PRETTIER" ]; then
-      "$PRETTIER" --write "$FILE" 2>/dev/null
-    elif [ -n "$BIOME" ] && find_biome_config "$FILE"; then
+    # A biome.json is an explicit project choice; a prettier binary is often just
+    # a transitive dependency in node_modules/.bin and would apply its defaults.
+    if [ -n "$BIOME" ] && find_biome_config "$FILE"; then
       "$BIOME" format --write "$FILE" 2>/dev/null
+    elif [ -n "$PRETTIER" ]; then
+      "$PRETTIER" --write "$FILE" 2>/dev/null
     fi
     ;;
   py)
