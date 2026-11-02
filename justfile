@@ -32,20 +32,25 @@ ai-link:
   ln -sf "$dotfiles_dir/.agents/claude/RTK.md" "$HOME/.claude/RTK.md"
   ln -sf "$dotfiles_dir/.agents/claude/settings.json" "$HOME/.claude/settings.json"
   ln -sf "$dotfiles_dir/.agents/claude/statusline-command.sh" "$HOME/.claude/statusline-command.sh"
-  ln -sfn "$dotfiles_dir/.agents/claude/hooks" "$HOME/.claude/hooks"
-  ln -sfn "$dotfiles_dir/.agents/claude/rules" "$HOME/.claude/rules"
   ln -sf "$dotfiles_dir/.agents/codex/config.toml" "$HOME/.codex/config.toml"
 
+  # ln -sfn onto a real directory nests the link inside it instead of
+  # replacing it, so refuse rather than leave a silent half-linked setup.
+  link_dir() {
+    if [[ -e "$2" && ! -L "$2" ]]; then
+      echo "real directory in the way, move it aside first: $2" >&2
+      exit 1
+    fi
+    ln -sfn "$1" "$2"
+  }
+  for d in hooks rules agents commands workflows templates; do
+    link_dir "$dotfiles_dir/.agents/claude/$d" "$HOME/.claude/$d"
+  done
   # Both skill dirs point at the repo as a whole: one copy, and anything a tool
   # writes there shows up in git status. Which skills load is set by
   # skillOverrides in settings.json, not by which links exist.
-  for dir in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
-    if [[ -e "$dir" && ! -L "$dir" ]]; then
-      echo "real directory in the way, move it aside first: $dir" >&2
-      exit 1
-    fi
-    ln -sfn "$dotfiles_dir/.agents/skills" "$dir"
-  done
+  link_dir "$dotfiles_dir/.agents/skills" "$HOME/.agents/skills"
+  link_dir "$dotfiles_dir/.agents/skills" "$HOME/.claude/skills"
 
 brew:
   brew bundle --file "{{dotfiles_dir}}/Brewfile"
@@ -66,7 +71,9 @@ doctor:
   echo "commands:"
   for c in brew zsh fnm zoxide fzf starship just; do check_cmd "$c"; done
   echo "symlinks:"
-  for l in "$HOME/.zshrc" "$HOME/.gitconfig" "$HOME/.gitignore_global" "$HOME/.hushlogin"; do check_link "$l"; done
+  for l in "$HOME/.zshrc" "$HOME/.gitconfig" "$HOME/.gitignore_global" "$HOME/.hushlogin" \
+           "$HOME/.config/starship.toml" "$HOME/.config/zed/settings.json" \
+           "$HOME/.config/ghostty/config.ghostty" "$HOME/.config/fastfetch/config.jsonc"; do check_link "$l"; done
   echo "—"
   echo "passed: $ok  failed: $fail"
   [[ $fail -eq 0 ]]
@@ -80,7 +87,8 @@ ai-doctor:
   echo "commands:"
   for c in bun codex claude jq; do check_cmd "$c"; done
   echo "global config:"
-  for l in "$HOME/.agents/README.md" "$HOME/.claude/CLAUDE.md" "$HOME/.claude/RTK.md" "$HOME/.claude/settings.json" "$HOME/.claude/hooks" "$HOME/.claude/rules"; do check_link "$l"; done
+  for l in "$HOME/.agents/README.md" "$HOME/.claude/CLAUDE.md" "$HOME/.claude/RTK.md" "$HOME/.claude/settings.json"; do check_link "$l"; done
+  for d in hooks rules agents commands workflows templates; do check_link "$HOME/.claude/$d"; done
   if [[ -f "$HOME/.codex/config.toml" ]]; then echo "  ok   $HOME/.codex/config.toml"; ok=$((ok+1)); else echo "  MISS $HOME/.codex/config.toml"; fail=$((fail+1)); fi
   echo "skills:"
   pool="{{dotfiles_dir}}/.agents/skills"
