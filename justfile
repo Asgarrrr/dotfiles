@@ -99,7 +99,10 @@ ai-doctor:
   [[ $fail -eq 0 ]]
 
 test:
-  bash "{{dotfiles_dir}}/tests/hooks.test.sh"
+  #!/usr/bin/env bash
+  rc=0
+  for t in "{{dotfiles_dir}}"/tests/*.test.sh; do bash "$t" || rc=1; done
+  exit $rc
 
 macos:
   bash "{{dotfiles_dir}}/macos.sh"

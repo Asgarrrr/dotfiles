@@ -27,19 +27,27 @@ if [ "$tool_name" = "Bash" ]; then
   [ -z "$cmd" ] && exit 0
 
   # rm with both a recursive and a force flag, in any spelling or order. Each
-  # simple command is checked on its own, so `rm x; ls -R; grep -f p` passes.
-  # Wrappers like sudo/xargs are skipped with their flags only: `sudo -u root rm`
-  # slips through, an accepted gap for a guard that is not a sandbox.
-  rm_cmd='^[[:space:]]*((sudo|doas|xargs|command|env|nohup|time|exec)([[:space:]]+-[^[:space:]]+)*[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*([^[:space:]]*/)?rm([[:space:]]|$)'
-  recursive='(^|[[:space:]])(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)([[:space:]]|$)'
-  force='(^|[[:space:]])(-[a-zA-Z]*f[a-zA-Z]*|--force)([[:space:]]|$)'
-  while IFS= read -r seg; do
-    if printf '%s' "$seg" | grep -qE "$rm_cmd" \
-      && printf '%s' "$seg" | grep -qE "$recursive" \
-      && printf '%s' "$seg" | grep -qE "$force"; then
-      deny "Blocked: rm -rf is forbidden. Use \`trash <file>\` or ask for explicit confirmation."
-    fi
-  done < <(printf '%s\n' "$cmd" | tr ';&|(){}`' '\n\n\n\n\n\n\n\n')
+  # simple command is checked on its own, and only the arguments after rm, so
+  # `rm x; ls -R` and `xargs -r rm -f` pass. Pure bash matching: a fork per
+  # line made long heredocs exceed the hook timeout, which fails open.
+  # Known gaps for a guard that is not a sandbox: a wrapper option that takes
+  # an argument (`sudo -u root rm -rf`), and quoted text or heredoc lines are
+  # read as commands, so `git commit -m "...; rm -rf ..."` is denied.
+  if [[ "$cmd" == *rm* ]]; then
+    wrapper='(sudo|doas|xargs|command|env|nohup|nice|time|timeout|exec|do|then|else|!)([[:space:]]+(-[^[:space:]]+|[0-9][^[:space:]]*))*[[:space:]]+'
+    assign='[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+'
+    rm_at='(^[[:space:]]*('"$wrapper"'|'"$assign"')*|-exec(dir)?[[:space:]]+)\\?([^[:space:]]*/)?rm([[:space:]]|$)'
+    recursive='(^|[[:space:]])(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)([[:space:]]|$)'
+    force='(^|[[:space:]])(-[a-zA-Z]*f[a-zA-Z]*|--force)([[:space:]]|$)'
+    continuation=$'\\\n'
+    while IFS= read -r seg; do
+      [[ "$seg" =~ $rm_at ]] || continue
+      args=" ${seg#*"${BASH_REMATCH[0]}"}"
+      if [[ "$args" =~ $recursive && "$args" =~ $force ]]; then
+        deny "Blocked: rm -rf is forbidden. Use \`trash <file>\` or ask for explicit confirmation."
+      fi
+    done < <(printf '%s\n' "${cmd//"$continuation"/ }" | tr ';&|(){}`' '\n\n\n\n\n\n\n\n')
+  fi
 
   # The flag must stand as its own word: the old `.*(-f|--force)` matched any
   # branch carrying a hyphen-f, so `git push origin feat/custom-field-filters`

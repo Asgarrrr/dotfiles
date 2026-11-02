@@ -32,14 +32,26 @@ expect_deny '/bin/rm -rf build'
 expect_deny 'command rm -rf build'
 expect_deny 'cd /tmp && rm -rf x'
 expect_deny 'echo $(rm -rf x)'
+expect_deny 'for d in a b; do rm -rf "$d"; done'
+expect_deny 'if true; then rm -rf x; fi'
+expect_deny 'true || ! rm -rf x'
+expect_deny 'nice rm -rf x'
+expect_deny 'timeout 10 rm -rf x'
+expect_deny '\rm -rf x'
+expect_deny 'find . -name dist -exec rm -rf {} +'
+expect_deny $'rm -r \\\n  -f build'
 expect_deny 'git push --force origin main'
 expect_deny 'git reset --hard HEAD~1'
 expect_allow 'rm -r build'
 expect_allow 'rm -f build.log'
 expect_allow 'rm build.log; ls -R; grep -f patterns file'
 expect_allow 'git rm -r --cached dist'
+expect_allow 'find . -name "*.pyc" | xargs -r rm -f'
 expect_allow 'grep -rf patterns src'
 expect_allow 'git push origin feat/custom-field-filters'
+big="$(printf 'rm -f file%s\n' $(seq 3000))"
+start=$SECONDS; out="$(safety "$big")"
+[[ -z "$out" ]] && (( SECONDS - start < 2 )) && ok "allows a 3000-line command in under 2s" || bad "allows a 3000-line command in under 2s"
 for c in 'rm -rf x' 'git reset --hard' 'git clean -fd' 'DROP TABLE users'; do
   [[ "$(safety "$c")" != *'§'* ]] && ok "no stale § citation: $c" || bad "no stale § citation: $c"
 done
@@ -58,6 +70,8 @@ stop() {
 }
 out="$(stop "$tmp/wt")"
 [[ "$out" == *'"block"'* && "$out" == *'uncommitted'* ]] && ok "blocks merge-ready claim on a dirty worktree" || bad "blocks merge-ready claim on a dirty worktree"
+out="$(stop "$tmp/main")"
+[[ -z "$out" ]] && ok "passes merge-ready claim on a clean checkout" || bad "passes merge-ready claim on a clean checkout"
 touch "$tmp/main/dirty"
 out="$(stop "$tmp/main")"
 [[ "$out" == *'"block"'* ]] && ok "blocks merge-ready claim on a dirty main checkout" || bad "blocks merge-ready claim on a dirty main checkout"
