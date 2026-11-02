@@ -37,7 +37,7 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "sonnet",
+  "model": "opus",
   "disableClaudeAiConnectors": true,
   "hooks": {
     "PreToolUse": [
@@ -114,7 +114,9 @@
     "frontend-design@claude-plugins-official": true,
     "superpowers@claude-plugins-official": false,
     "code-review@claude-plugins-official": true,
-    "typescript-lsp@claude-plugins-official": true
+    "typescript-lsp@claude-plugins-official": true,
+    "rust-skills@rust-skills": false,
+    "rust-analyzer-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "sentrux-marketplace": {
@@ -134,10 +136,57 @@
         "source": "github",
         "repo": "paper-design/agent-plugins"
       }
+    },
+    "rust-skills": {
+      "source": {
+        "source": "github",
+        "repo": "actionbook/rust-skills"
+      }
     }
+  },
+  "skillOverrides": {
+    "agents-sdk": "off",
+    "better-auth-best-practices": "off",
+    "better-auth-security-best-practices": "off",
+    "cloudflare": "off",
+    "cloudflare-email-service": "off",
+    "cloudflare-one": "off",
+    "cloudflare-one-migrations": "off",
+    "create-auth-skill": "off",
+    "durable-objects": "off",
+    "email-and-password-best-practices": "off",
+    "organization-best-practices": "off",
+    "sandbox-sdk": "off",
+    "shadcn": "off",
+    "turnstile-spin": "off",
+    "two-factor-authentication-best-practices": "off",
+    "use-railway": "off",
+    "vercel-composition-patterns": "off",
+    "vercel-react-best-practices": "off",
+    "vercel-react-view-transitions": "off",
+    "workers-best-practices": "off",
+    "wrangler": "off",
+    "better-accessibility": "name-only",
+    "better-colors": "name-only",
+    "better-interface": "name-only",
+    "better-layout": "name-only",
+    "better-typography": "name-only",
+    "better-ui": "name-only",
+    "better-writing": "name-only",
+    "build-design": "name-only",
+    "make-interfaces-feel-better": "name-only",
+    "technical-drawing": "name-only",
+    "test-deslop": "name-only",
+    "web-design-guidelines": "name-only",
+    "web-perf": "name-only"
   },
   "feedbackSurveyRate": 0,
   "effortLevel": "high",
+  "modelSettings": {
+    "glm-5.3-uncensored": {
+      "effortLevel": "medium"
+    }
+  },
   "autoCompactWindow": 200000,
   "showClearContextOnPlanAccept": true,
   "tui": "fullscreen",
