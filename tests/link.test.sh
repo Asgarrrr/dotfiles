@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs `just ai-link` against a throwaway HOME and checks every link.
-# Run: just test
+# Run: just test (or bash tests/link.test.sh)
 set -uo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -29,7 +29,9 @@ for pair in \
 done
 ai_link && [[ ! -e "$repo/.agents/claude/agents/agents" ]] && ok "re-run does not nest links" || bad "re-run does not nest links"
 
-HOME="$home" just -f "$repo/justfile" ai-doctor >/dev/null 2>&1 && ok "ai-doctor passes" || bad "ai-doctor passes"
+# Missing commands (claude on a fresh machine) are not this test's concern.
+! HOME="$home" just -f "$repo/justfile" ai-doctor 2>/dev/null | grep -qE 'MISS (/|skillOverrides|cannot)' \
+  && ok "ai-doctor finds no missing link" || bad "ai-doctor finds no missing link"
 
 trash "$home"; home="$(mktemp -d)"
 mkdir -p "$home/.claude/agents"

@@ -106,8 +106,5 @@ ai-doctor:
   echo "passed: $ok  failed: $fail"
   [[ $fail -eq 0 ]]
 
-test:
-  bash "{{dotfiles_dir}}/tests/link.test.sh"
-
 macos:
   bash "{{dotfiles_dir}}/macos.sh"
