@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop hook: enforce ~/.claude/CLAUDE.md §13 (evidence on completion claims).
+# Stop hook: enforce the completion-evidence rule in ~/.claude/CLAUDE.md.
 #
 # Strategy
 # --------
@@ -136,8 +136,8 @@ if [ "$claim_build" = "1" ] && ! matched_success "$build_cmd_re"; then
 fi
 
 if [ "$claim_merge" = "1" ]; then
-  if [ -n "$cwd" ] && [ -d "$cwd/.git" ]; then
-    dirty=$(cd "$cwd" && git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+  if [ -n "$cwd" ] && git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    dirty=$(git -C "$cwd" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
     if [ -n "$dirty" ] && [ "$dirty" != "0" ]; then
       issues+=("Merge-ready claim — working tree has $dirty uncommitted or untracked path(s). Run \`git status\` and commit (or stash) before claiming merge-ready.")
     fi
@@ -160,7 +160,7 @@ if [ "${#issues[@]}" -eq 0 ]; then
 fi
 
 # ----- Emit block decision -----------------------------------------------
-reason=$'You signaled completion, but the following claims lack evidence (per ~/.claude/CLAUDE.md §13):\n'
+reason=$'You signaled completion, but the following claims lack evidence (per ~/.claude/CLAUDE.md, Communication):\n'
 for i in "${issues[@]}"; do
   reason+=$'\n  • '"$i"
 done

@@ -98,5 +98,11 @@ ai-doctor:
   echo "passed: $ok  failed: $fail"
   [[ $fail -eq 0 ]]
 
+test:
+  #!/usr/bin/env bash
+  rc=0
+  for t in "{{dotfiles_dir}}"/tests/*.test.sh; do bash "$t" || rc=1; done
+  exit $rc
+
 macos:
   bash "{{dotfiles_dir}}/macos.sh"
