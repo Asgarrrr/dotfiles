@@ -13,6 +13,9 @@ export const meta = {
 
 const task = typeof args === 'string' ? args : args && args.task
 const dir = (args && args.dir) || 'the current working directory'
+// dir above is prose for prompts; shell lines need the real path or nothing.
+const shq = p => `'${String(p).replace(/'/g, `'\\''`)}'`
+const dirFlag = args && args.dir ? `-C ${shq(args.dir)} ` : ''
 const opts = typeof args === 'object' && args !== null ? args : {}
 // Accept "true" — args survive a JSON round-trip and booleans arrive as strings.
 const go = opts.go === true || opts.go === 'true'
@@ -130,9 +133,10 @@ const closeSchema = s => s.type === 'object'
 // the wrapper has nothing to paraphrase. mktemp keeps parallel seats from sharing files.
 const codexCall = (schema, question) =>
   `Run this from ${dir}. Replace <the question> with the question below, verbatim:\n\n` +
-  `  d=$(mktemp -d) && cat > "$d/schema.json" <<'SCHEMA'\n${JSON.stringify(closeSchema(schema))}\nSCHEMA\n` +
-  `  codex exec -C ${dir} -s read-only --ephemeral -m ${gptTier.model} -c model_reasoning_effort=${gptTier.effort} --output-schema "$d/schema.json" -o "$d/answer.json" - <<'PROMPT'\n  <the question>\n  PROMPT\n` +
-  `  cat "$d/answer.json"\n\n` +
+  // Heredoc terminators must sit at column 0, or the heredoc never closes.
+  `d=$(mktemp -d) && cat > "$d/schema.json" <<'SCHEMA'\n${JSON.stringify(closeSchema(schema))}\nSCHEMA\n` +
+  `codex exec ${dirFlag}-s read-only --ephemeral -m ${gptTier.model} -c model_reasoning_effort=${gptTier.effort} --output-schema "$d/schema.json" -o "$d/answer.json" - <<'PROMPT'\n<the question>\nPROMPT\n` +
+  `cat "$d/answer.json"\n\n` +
   `The -m flag is required: without it codex uses its configured default, which may ` +
   `not be a second family at all. The cat output is GPT's answer.\n` +
   `--- question to relay verbatim ---\n${question}\n--- end ---\n\n`
@@ -340,11 +344,13 @@ if (!givenSlices && seatsThatRan.length >= 2) {
 
 // Prefer the council's de-duplicated concerns over the raw union: three seats
 // raising one risk should reach the planner once, not three times. Fall back to raw
-// findings when no council ran (single seat, or a carried plan).
+// findings when no council ran (single seat, or a carried plan). The synthesiser
+// only reads council seats, so vet:deps findings are added back explicitly.
 const councilConcerns = (councilVerdict && councilVerdict.concerns) || null
+const depsFindings = ((vetLabelled.find(x => x.seat === 'vet:deps') || {}).r || {}).findings || []
 const planConstraints = councilConcerns
-  ? [...councilConcerns.filter(c => c.impact === 'blocks-plan'),
-     ...councilConcerns.filter(c => c.impact === 'shapes-plan')]
+  ? [...depsFindings, ...councilConcerns].filter(c => c.impact === 'blocks-plan')
+      .concat([...depsFindings, ...councilConcerns].filter(c => c.impact === 'shapes-plan'))
   : [...blocking, ...shaping]
 
 // contested holds the annotated copies; planConstraints holds the originals. Look up
@@ -400,14 +406,15 @@ const constraints = (planConstraints.length
 // passed", which means nothing without a baseline. Running it here — not before
 // Implement — means the planner knows whether the suite is already red: told
 // "bun test exits 0" on a red repo, an implementer's shortest path to that criterion
-// is to "fix" the failing test nobody asked it to touch.
-if (!givenSlices) phase('Plan')
-const preflight = givenSlices ? null : await agent(
+// is to "fix" the failing test nobody asked it to touch. A carried plan needs the
+// baseline too: the review still reads it.
+phase(givenSlices ? 'Implement' : 'Plan')
+const preflight = await agent(
   `In ${dir}, record the starting state. Do not modify anything.\n` +
   `1. Is the working tree clean? Run git status --porcelain and report it verbatim (empty means clean).\n` +
   `2. Run the project's full test command once and report the exact command and its exit code.\n` +
   `Report what you find. A dirty tree or a red baseline is not your problem to fix — record it.`,
-  { label: 'preflight', phase: 'Plan', model: 'sonnet', effort: 'low',
+  { label: 'preflight', phase: givenSlices ? 'Implement' : 'Plan', model: 'sonnet', effort: 'low',
     schema: {
       type: 'object',
       properties: {
@@ -424,9 +431,9 @@ const baseline = preflight
   ? { clean: preflight.treeClean, dirty: preflight.dirtyFiles || [], cmd: preflight.testCommand,
       exit: preflight.testExitCode, failing: preflight.failingTests || [] }
   : { clean: null, dirty: [], cmd: 'unknown', exit: null, failing: [] }
-if (!givenSlices && !preflight) {
+if (!preflight) {
   log('preflight: agent lost — baseline unknown, every verification claim below is unanchored')
-} else if (!givenSlices) {
+} else {
   log(`preflight: tree ${baseline.clean ? 'clean' : `DIRTY (${baseline.dirty.length} file(s))`}, ` +
       `baseline ${baseline.exit === 0 ? 'green' : baseline.exit === -1 ? 'no test command' : `RED (exit ${baseline.exit})`}`)
   if (!baseline.clean) log('preflight: uncommitted work present — the final diff will mix it with this run')
@@ -614,9 +621,6 @@ if (!go) {
   }
 }
 
-// PRE-FLIGHT. Every downstream claim is phrased as "verification passed", which means
-// nothing without a baseline: a slice can pass against a suite that was already red,
-// and the final diff can attribute pre-existing uncommitted work to this run.
 phase('Implement')
 const SLICE_RESULT = {
   type: 'object',
@@ -669,7 +673,7 @@ const reviewSlice = (s, i, attempt) => agent(
   `contract did not settle, a test that would pass against a plausibly-wrong implementation, ` +
   `or code outside the slice's files. Verify each issue against the code. Style nits are not issues.`,
   // The attempt in the label keeps a resumed run from replaying the first verdict.
-  { label: `peer:${(s.title || `slice ${i + 1}`).slice(0, 30)}:${attempt}`, phase: 'Implement',
+  { label: `peer:${i + 1}:${(s.title || '').slice(0, 30)}:${attempt}`, phase: 'Implement',
     model: 'sonnet', effort: 'medium', schema: SLICE_REVIEW })
 
 const done = []
@@ -677,7 +681,8 @@ for (const [i, s] of plan.slices.entries()) {
   // Sonnet only implements what a contract has already designed; anything else stays on opus.
   // Slices from plans approved before contract/risk existed carry neither, and stay on opus.
   const cheap = s.risk === 'low' && Boolean(s.contract)
-  const label = `slice:${(s.title || `slice ${i + 1}`).slice(0, 30)}`
+  // The index keeps two titles that share their first 30 characters apart.
+  const label = `slice:${i + 1}:${(s.title || '').slice(0, 30)}`
   let model = cheap ? 'sonnet' : 'opus'
   let r = await agent(sliceBrief(s, i),
     { label, phase: 'Implement', model, effort: 'high', schema: SLICE_RESULT })

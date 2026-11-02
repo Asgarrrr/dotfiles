@@ -22,7 +22,7 @@ flowchart TD
     start([args]) --> carried{slices given?}
 
     carried -- no --> explore
-    carried -- yes --> impl
+    carried -- yes --> preflight
 
     subgraph explore [Explore]
         e1[reader: conventions]
@@ -44,7 +44,8 @@ flowchart TD
     end
 
     vet --> preflight[preflight<br/>git status + test baseline]
-    preflight --> plan[plan<br/>walking skeleton, then slices]
+    preflight -- planning --> plan[plan<br/>walking skeleton, then slices]
+    preflight -- carried plan --> impl
     plan --> audit[plan:audit<br/>were constraints kept?<br/>only if Vet raised any]
     audit --> gate{go?}
 
@@ -104,7 +105,7 @@ sequenceDiagram
         Note over W: Explore, Vet, Plan replay from the resume cache
     else fresh session
         You->>W: slices: [...], go: true
-        Note over W: no Explore, Vet, Plan or preflight
+        Note over W: no Explore, Vet or Plan; preflight still runs
     end
     W-->>You: mode: executed, paused or blocked
 ```
@@ -112,11 +113,9 @@ sequenceDiagram
 ## Known issues
 
 From the audit of 2026-11-02. Each one needs a failing test before its fix.
+`tests/big-feature.test.mjs` runs the script against stubbed agents.
 
-- The codex heredoc terminator is indented, so the `PROMPT` heredoc never closes.
-- Without `dir`, `codex exec -C` receives the text "the current working directory".
-- When the council synthesis runs, `vet:deps` blocking findings never reach the planner.
-- A carried plan (`slices` + `go`) skips preflight and restarts at slice 1, so it re-implements slices already in the tree.
+- A carried plan (`slices` + `go`) restarts at slice 1, so it re-implements slices already in the tree.
 - Same-session resume depends on the resume cache. Before Claude Code 2.1.305, `parallel()` fan-outs can rerun on resume, so the planner can run again and execute a plan you did not approve.
 - The slice's `exitCode` is part of the result schema, but no step reads it.
 - With `go: true`, plan-audit gaps only reach the log; execution continues.
