@@ -3,17 +3,19 @@ DOTFILES_DIR="$HOME/dotfiles"
 export STARSHIP_CONFIG="$DOTFILES_DIR/.config/starship.toml"
 [[ -f "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"  # machine-local secrets, never committed
 
+# Apple Silicon's default PATH omits /opt/homebrew/bin, so starship, fzf and
+# fnm would silently go missing. shellenv also sets HOMEBREW_PREFIX.
+if [[ -x /opt/homebrew/bin/brew ]]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -x /usr/local/bin/brew ]]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
+
 export ZSH="$HOME/.oh-my-zsh"
 ZSH_THEME=""
 plugins=(git)
 
-source "$ZSH/oh-my-zsh.sh"
-
-if [[ -d /opt/homebrew ]]; then
-  export HOMEBREW_PREFIX="/opt/homebrew"
-elif [[ -d /usr/local ]]; then
-  export HOMEBREW_PREFIX="/usr/local"
-fi
+[[ -f "$ZSH/oh-my-zsh.sh" ]] && source "$ZSH/oh-my-zsh.sh"
 
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
 
@@ -38,4 +40,4 @@ if [[ -t 0 && -t 1 ]]; then
 fi
 
 # bun completions
-[ -s "/Users/asgarrrr/.bun/_bun" ] && source "/Users/asgarrrr/.bun/_bun"
+[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
