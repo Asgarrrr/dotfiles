@@ -295,13 +295,13 @@ if (!givenSlices && seatsThatRan.length >= 2) {
   // defers to the last argument it read.
   // One rebuttal per (concern, seat that missed it) — routed to that seat's model.
   // Asking a default agent instead would let the raiser's own model confirm itself.
-  const rebuttalJobs = contested.flatMap(c =>
+  const rebuttalJobs = contested.flatMap((c, ci) =>
     (c.missedBy || [])
       .filter(seat => SEAT_MODEL[seat] && !(c.raisedBy || []).includes(seat))
-      .map(seat => ({ concern: c, seat })))
+      .map(seat => ({ concern: c, ci, seat })))
 
   if (rebuttalJobs.length) {
-    const rebuttals = (await parallel(rebuttalJobs.map(({ concern: c, seat }) => () => agent(
+    const rebuttals = (await parallel(rebuttalJobs.map(({ concern: c, ci, seat }) => () => agent(
       `You reviewed this task independently and did not raise the concern below. Another ` +
       `reasoner did. Decide whether it is real — you are not being asked to agree.\n\n` +
       `--- the concern ---\n[${c.impact}] ${c.claim}\nEvidence offered: ${c.evidence}\n--- end ---\n\n` +
@@ -317,7 +317,7 @@ if (!givenSlices && seatsThatRan.length >= 2) {
           codexCall(REBUTTAL, 'the concern, context and instructions above, verbatim') +
           `If codex fails, return verdict "unresolved" and say codex failed.`
         : ''),
-      { label: `rebut:${seat.replace('council:', '')}:${c.claim.slice(0, 18)}`, phase: 'Vet',
+      { label: `rebut:${seat.replace('council:', '')}:${ci + 1}:${c.claim.slice(0, 18)}`, phase: 'Vet',
         model: SEAT_MODEL[seat], effort: seat === 'council:gpt' ? 'medium' : 'high',
         schema: REBUTTAL }).then(v => ({ claim: c.claim, seat, verdict: v && v.verdict, reasoning: v && v.reasoning })))))
       .filter(Boolean)

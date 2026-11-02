@@ -63,7 +63,9 @@ const FULL = { task: 'add a thing', dir: '/repo', go: true, gpt: true, fable: tr
 test('every agent label is unique within a run', async () => {
   const long = 'Persist the session store to disk across restarts'
   const slices = [0, 1].map(i => ({ ...SLICES[1], title: `${long} part ${i}` }))
-  const { calls } = await run(FULL, { plan: { slices } })
+  const concern = claim => ({ claim, evidence: 'e', impact: 'shapes-plan', raisedBy: ['council:opus'], missedBy: ['council:gpt'] })
+  const synth = { concerns: [concern('The migration will break readers'), concern('The migration will drop rows')] }
+  const { calls } = await run(FULL, { plan: { slices }, 'council:synth': synth })
   const labels = calls.map(c => c.opts.label)
   const dupes = labels.filter((l, i) => labels.indexOf(l) !== i)
   assert.deepEqual(dupes, [])
@@ -76,10 +78,11 @@ test('no codex shell line carries the placeholder dir', async () => {
   for (const l of lines) assert.doesNotMatch(l, /current working directory/)
 })
 
-test('codex -C quotes a dir that contains a space', async () => {
-  const { calls } = await run({ task: 't', dir: '/my repo', gpt: true })
+test('codex -C quotes a dir that contains a space or a single quote', async () => {
+  const { calls } = await run({ task: 't', dir: "/it's my repo", gpt: true })
   const lines = calls.flatMap(c => c.prompt.split('\n')).filter(l => l.includes('codex exec'))
-  for (const l of lines) assert.match(l, /-C '\/my repo'/)
+  assert.ok(lines.length)
+  for (const l of lines) assert.ok(l.includes(`-C '/it'\\''s my repo' `), l)
 })
 
 test('every heredoc in a codex call has its terminator at column 0', async () => {
@@ -101,6 +104,8 @@ test('a vet:deps blocks-plan finding reaches the planner and the audit when the 
   assert.equal(byLabel('council:synth').length, 1, 'precondition: synthesis ran')
   assert.match(byLabel('plan')[0].prompt, /DEPS-BLOCKER/)
   assert.match(byLabel('plan:audit')[0].prompt, /DEPS-BLOCKER/)
+  const plan = byLabel('plan')[0].prompt
+  assert.ok(plan.indexOf('DEPS-BLOCKER') < plan.indexOf('OPUS-CONCERN'), 'blocks-plan before shapes-plan')
 })
 
 test('a carried plan runs preflight', async () => {
