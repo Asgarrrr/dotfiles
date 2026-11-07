@@ -544,6 +544,8 @@ test('contract: the test-writer works from the contract alone, apart from the im
   assert.ok(!t.prompt.includes('decisions.md') && !t.prompt.includes('/designs/') && !t.prompt.includes('Run dir'))
   assert.ok(t.prompt.includes('Read no other file under /repo/.claude/runs/add-thing.'))
   assert.notEqual(t.opts.agentType, 'implementer')
+  // The build forbids edits to every listed file: a production file that only registers a test module must stay editable.
+  assert.match(t.prompt, /files that hold tests only/)
   assert.ok(byLabel('sh:tests:red')[0].prompt.includes(`bash -c 'set -o pipefail; npm test'`))
 })
 

@@ -753,7 +753,7 @@ async function contractAfterBranch(branch, base, from, CONTEXT) {
   }, null, 2), 'Tests')
   const TESTS = {
     type: 'object',
-    properties: { files: { type: 'array', items: { type: 'string' }, description: 'paths relative to the repo' }, testCommand: { type: 'string', description: 'runs exactly the new tests, from the repo dir' }, commit: { type: 'string' } },
+    properties: { files: { type: 'array', items: { type: 'string' }, description: 'paths relative to the repo, of the files that hold tests only' }, testCommand: { type: 'string', description: 'runs exactly the new tests, from the repo dir' }, commit: { type: 'string' } },
     required: ['files', 'testCommand', 'commit'],
   }
   // The test-writer sees the contract, not the designs or the reasons behind them,
@@ -763,7 +763,9 @@ async function contractAfterBranch(branch, base, from, CONTEXT) {
     `${RUN}/contract/contract.md, the acceptance criteria in ${RUN}/task.md, and every test named in ` +
     `${RUN}/premortem.md. Read no other file under ${RUN}. The stubs are committed on ${branch}. ` +
     `Follow the repo's test conventions. Each test must fail against the stubs and pass once the ` +
-    `contract is met. Commit the tests, and return the files and the commit hash.`,
+    `contract is met. Put every new test in files that hold tests only. The build forbids edits to the ` +
+    `files you return, so list only those: a production file you edit only to register a test module stays ` +
+    `off the list. Commit the tests, and return the files and the commit hash.`,
     { label: 'tests', phase: 'Tests', model: 'opus', effort: 'high', schema: TESTS })
   if (!t || !t.files.length) return blocked('the test-writer returned no test file')
   // git reads HEAD:<path> relative to the repo; agents often return absolute paths.
