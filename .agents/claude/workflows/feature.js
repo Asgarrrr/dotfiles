@@ -542,7 +542,8 @@ async function contractAfterBranch(branch, base, from, CONTEXT) {
     `its file, its signatures copied from the stubs, its invariants, and the facts about the ` +
     `existing code it relies on as claims with path:line. Then cut the build into vertical ` +
     `slices: each touches data, behavior and test, names its bricks, and has a gate command ` +
-    `that runs its tests. Add nothing the acceptance criteria do not require: a unit, option ` +
+    `that runs its tests only: no scope or diff check. The final gate reruns every slice gate on the ` +
+    `whole branch, after later slices and the review fixes have changed other files. Add nothing the acceptance criteria do not require: a unit, option ` +
     `or seam without a present need is a defect. Commit the stubs on the current branch ` +
     `(${branch}); the run dir is git-excluded, so contract.md stays out of the commit.`
   let c = null

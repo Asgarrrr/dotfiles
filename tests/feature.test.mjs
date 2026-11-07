@@ -706,6 +706,7 @@ test('contract: the premortem runs on the chosen design, and a mode without a te
   assert.deepEqual(result.premortem.map(m => m.mode), ['Cyrillic dropped'])
   assert.match(logs.join('\n'), /1 mode\(s\) without a test dropped/)
   assert.ok(byLabel('contract')[0].prompt.includes('/premortem.md'), 'the contract reads the premortem')
+  assert.match(byLabel('contract')[0].prompt, /gate command that runs its tests only: no scope or diff check/, 'the final gate reruns every slice gate after the fix')
   assert.ok(byLabel('tests')[0].prompt.includes('/premortem.md'), 'the test-writer binds the premortem tests')
 })
 
