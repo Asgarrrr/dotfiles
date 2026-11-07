@@ -425,3 +425,288 @@ test('design: every agent label is unique, and next names decisions.md', async (
   assert.deepEqual(labels.filter((l, i) => labels.indexOf(l) !== i), [])
   assert.match(result.next, /decisions\.md/)
 })
+
+// --- contract --------------------------------------------------------------
+
+const CONTRACT = { ...BASE, stage: 'contract' }
+const SLICE = (title, extra = {}) => ({ title, kind: 'implement', risk: 'low', gate: { command: 'npm test', budgetSec: 120 }, bricks: ['slugify'], ...extra })
+const point = (id, extra = {}) => ({ id, claim: `claim ${id}`, evidence: 'e', severity: 'major', ...extra })
+const answer = (id, verdict, proof, extra = {}) => ({ id, verdict, proof, checked: [], addsStructure: false, secondConsumer: '', changesDesign: false, ...extra })
+const CONTRACT_FIXTURES = {
+  'sh:branch': { output: 'BASE=abc1234\nEXIT=0' },
+  'premortem': { framing: 'This design will succeed at slugs under any script.', modes: [
+    { mode: 'Cyrillic dropped', trigger: 'slugify("й")', test: 'cyrillic: slugify("й") is not empty' },
+    { mode: 'vague worry', trigger: 'someday', test: '' },
+  ] },
+  'contract': {
+    bricks: [{ name: 'slugify', file: 'src/slug.js', claims: [{ claim: 'slugify is exported', ref: 'src/slug.js:1' }] }],
+    compileCommand: 'node --check src/slug.js',
+    suiteCommand: 'npm test', lintCommand: 'npm run lint', mutationCommand: '',
+    slices: [SLICE('Accents'), SLICE('Drop chars', { risk: 'high' })], digest: 'contract digest',
+  },
+  'ground': { checks: [{ claim: 'slugify is exported', ref: 'src/slug.js:1', verdict: 'true', excerpt: 'export function slugify' }] },
+  'tests': { files: ['test/slug.test.js'], testCommand: 'npm test', commit: 'def5678' },
+  'sh:tests:red': { output: '1 failing\nEXIT=1' },
+  'sh:critique:gpt': { output: `--- answer ---\n${JSON.stringify({ points: [point('p1'), point('p2'), point('p3')] })}\n--- end answer ---\nEXIT=0` },
+  'critique:answer': { answers: [
+    answer('p1', 'accept', { kind: 'failing-test', ref: 'test/x.test.js', command: 'node --test x' }),
+    answer('p2', 'accept', { kind: 'doc', ref: 'https://docs.example/x', command: '' }, { addsStructure: true }),
+    answer('p3', 'reject', { kind: 'none', ref: '', command: '' }, { checked: ['src/slug.js:1 already trims'] }),
+  ] },
+  'sh:proof': { output: 'Error: expected\nEXIT=1' },
+}
+// The apply agent returns the whole contract after the fixes.
+CONTRACT_FIXTURES['critique:apply'] = CONTRACT_FIXTURES.contract
+const runContract = (args, overrides = {}, calls) => run({ ...CONTRACT, ...args }, { ...CONTRACT_FIXTURES, ...overrides }, calls)
+const codexLines = calls => calls.flatMap(c => c.prompt.split('\n')).filter(l => l.includes('codex exec'))
+
+test('contract: exactly one codex call, on gpt-6-astra at xhigh by default', async () => {
+  const { calls } = await runContract()
+  const lines = codexLines(calls)
+  assert.equal(lines.length, 1)
+  assert.match(lines[0], /-m gpt-6-astra /)
+  assert.match(lines[0], /model_reasoning_effort=xhigh/)
+  // The codex line sits inside bash -c '…', so its own quotes are escaped once more.
+  assert.ok(lines[0].includes(`-C '\\''/repo'\\'' `), lines[0])
+})
+
+test('contract: gpt sol switches tier, gpt false skips codex entirely', async () => {
+  assert.match(codexLines((await runContract({ gpt: 'sol' })).calls)[0], /-m gpt-6-sol /)
+  const off = await runContract({ gpt: false })
+  assert.equal(codexLines(off.calls).length, 0)
+  assert.equal(off.byLabel('critique:answer').length, 0)
+  await assert.rejects(runContract({ gpt: 'gpt-4' }), /gpt/)
+  await assert.rejects(runContract({ gpt: 'constructor' }), /gpt/)
+})
+
+test('contract: an exhausted GPT quota is the first warning, with no fallback critic', async () => {
+  // An empty premortem warns first in time; the quota warning must still lead.
+  const { result, calls } = await runContract({}, { premortem: null, 'sh:critique:gpt': { output: "ERROR: You've hit your usage limit.\nEXIT=1" } })
+  assert.match(result.warnings[0], /quota/i)
+  assert.equal(result.warnings.length, 2)
+  assert.equal(calls.filter(c => c.opts.label.startsWith('critique:') && c.opts.label !== 'critique:gpt').length, 0)
+})
+
+test('contract: an accepted critique that adds structure without a second consumer is rejected and stays in the ledger', async () => {
+  const { result, byLabel } = await runContract()
+  const p2 = result.ledger.find(l => l.id === 'p2')
+  assert.equal(p2.verdict, 'rejected')
+  assert.match(p2.note, /second consumer/)
+  const ledger = byLabel('sh:write:ledger')[0].prompt
+  assert.ok(ledger.includes('claim p2'))
+  assert.ok(ledger.includes('claim p1'), 'accepted critiques are in the ledger too')
+})
+
+test('contract: an accept without proof is unproven, and a reject must list what was checked', async () => {
+  const { result, byLabel } = await runContract({}, {
+    'critique:answer': { answers: [
+      answer('p1', 'accept', { kind: 'failing-test', ref: 't', command: 'node --test t' }),
+      answer('p2', 'accept', { kind: 'none', ref: '', command: '' }),
+      answer('p3', 'reject', { kind: 'none', ref: '', command: '' }),
+    ] },
+    // The answer says p1 fails; rerun by the script, it passes.
+    'sh:proof:p1': { output: 'ok\nEXIT=0' },
+  })
+  assert.deepEqual(result.ledger.map(l => l.verdict), ['unproven', 'unproven', 'unproven'])
+  assert.ok(byLabel('sh:proof:p1')[0].prompt.includes(`bash -c 'set -o pipefail; node --test t'`))
+  const missing = await runContract({}, { 'sh:proof:p1': { output: 'it fails, trust me' } })
+  assert.equal(missing.result.ledger.find(l => l.id === 'p1').verdict, 'unproven')
+  const noUrl = await runContract({}, { 'critique:answer': { answers: [answer('p1', 'accept', { kind: 'doc', ref: 'the README says so', command: '' })] } })
+  assert.equal(noUrl.result.ledger.find(l => l.id === 'p1').verdict, 'unproven', 'a doc proof needs a URL')
+})
+
+test('contract: only proven accepts are applied, and a design change becomes a question', async () => {
+  const { byLabel, result } = await runContract()
+  const apply = byLabel('critique:apply')[0].prompt
+  assert.ok(apply.includes('claim p1') && !apply.includes('claim p2') && !apply.includes('claim p3'))
+  const changed = await runContract({}, { 'critique:answer': { answers: [
+    answer('p1', 'accept', { kind: 'stub-compile', ref: 'src/a.rs', command: 'cargo check' }, { changesDesign: true }),
+  ] } })
+  assert.equal(changed.byLabel('critique:apply').length, 0)
+  assert.equal(changed.result.status, 'questions')
+  const q = changed.result.questions.find(q => q.id === 'critique-p1')
+  assert.ok(q && q.header.length <= 12 && q.options.some(o => o.label === q.recommendation.option))
+  assert.equal(result.status, 'ready')
+})
+
+test('contract: tests that pass against the stubs block the run', async () => {
+  const { result } = await runContract({}, { 'sh:tests:red': { output: 'all passed\nEXIT=0' } })
+  assert.equal(result.status, 'blocked')
+  assert.match(result.reason, /green against the stubs/)
+  const missing = await runContract({}, { 'sh:tests:red': { output: 'some failed' } })
+  assert.equal(missing.result.status, 'blocked')
+})
+
+test('contract: the test-writer works from the contract alone, apart from the implementer', async () => {
+  const { byLabel } = await runContract()
+  const t = byLabel('tests')[0]
+  assert.ok(t.prompt.includes('/contract/contract.md'))
+  assert.ok(!t.prompt.includes('decisions.md') && !t.prompt.includes('/designs/') && !t.prompt.includes('Run dir'))
+  assert.ok(t.prompt.includes('Read no other file under /repo/.claude/runs/add-thing.'))
+  assert.notEqual(t.opts.agentType, 'implementer')
+  assert.ok(byLabel('sh:tests:red')[0].prompt.includes(`bash -c 'set -o pipefail; npm test'`))
+})
+
+test('contract: a false claim gets one revision, then needs-human', async () => {
+  const bad = { checks: [{ claim: 'slugify is exported', ref: 'src/slug.js:1', verdict: 'false', excerpt: 'function slugify' }] }
+  const once = await runContract({}, { 'ground:1': bad })
+  assert.equal(once.byLabel('contract:revise').length, 1)
+  assert.ok(once.byLabel('contract:revise')[0].prompt.includes('src/slug.js:1): function slugify'))
+  assert.equal(once.result.groundFalse, 1)
+  const twice = await runContract({}, { ground: bad })
+  assert.equal(twice.result.status, 'needs-human')
+  assert.equal(twice.byLabel('tests').length, 0)
+})
+
+test('contract: the ground agent sees the claims, not the contract author reasoning', async () => {
+  const { byLabel } = await runContract()
+  const g = byLabel('ground:1')[0]
+  assert.equal(g.opts.model, 'sonnet')
+  assert.ok(g.prompt.includes('src/slug.js:1'))
+  assert.ok(!g.prompt.includes('contract digest'))
+})
+
+test('contract: stubs that do not compile block, and so does a slice naming an unknown brick', async () => {
+  assert.equal((await runContract({}, { 'sh:compile:contract': { output: 'SyntaxError\nEXIT=1' } })).result.status, 'blocked')
+  assert.equal((await runContract({}, { 'sh:compile:applied': { output: 'EXIT=1' } })).result.status, 'blocked', 'the critique fixes are recompiled')
+  const c = { ...CONTRACT_FIXTURES.contract, slices: [SLICE('x', { bricks: ['nope'] })] }
+  const unknown = await runContract({}, { contract: c })
+  assert.equal(unknown.result.status, 'blocked')
+  assert.match(unknown.result.reason, /nope/)
+})
+
+test('contract: after the branch exists, an empty agent result blocks instead of throwing, and writes contract.json', async () => {
+  for (const label of ['contract', 'critique:apply', 'tests']) {
+    const { result, byLabel } = await runContract({}, { [label]: null })
+    assert.equal(result.status, 'blocked', label)
+    assert.equal(byLabel('sh:write:result:contract').length, 1, label)
+  }
+  const revise = await runContract({}, { 'ground:1': { checks: [] }, 'contract:revise': null })
+  assert.equal(revise.result.status, 'blocked')
+})
+
+test('contract: a claim the ground checker leaves out counts as false', async () => {
+  for (const g of [null, { checks: [] }, { checks: [{ claim: 'other', ref: 'src/other.js:3', verdict: 'true', excerpt: '' }] }]) {
+    const { byLabel, result } = await runContract({}, { 'ground:1': g })
+    assert.equal(byLabel('contract:revise').length, 1, JSON.stringify(g))
+    assert.equal(result.groundFalse, 1)
+  }
+})
+
+test('contract: slices.json carries the base, the commands and the slices', async () => {
+  const { byLabel } = await runContract()
+  const w = byLabel('sh:write:slices')[0].prompt
+  const json = JSON.parse(w.split("<<'FEATURE_EOF'\n")[1].split('\nFEATURE_EOF')[0])
+  assert.equal(json.base, 'abc1234')
+  assert.equal(json.suite, 'npm test')
+  assert.equal(json.slices.length, 2)
+})
+
+test('contract: a branch that already exists is refused, and the stage never runs on main', async () => {
+  const { byLabel } = await runContract()
+  const b = byLabel('sh:branch')[0].prompt
+  assert.ok(b.includes("git switch -c 'feature/add-thing'"))
+  assert.ok(b.includes("test -f '/repo/.claude/runs/add-thing/decisions.md'"))
+  assert.ok(b.includes('test -z "$(git status --porcelain)"'), 'a dirty tree would ride into the stub commit')
+  assert.equal((await runContract({}, { 'sh:branch': { output: 'fatal: already exists\nEXIT=128' } })).result.status, 'blocked')
+})
+
+test('contract: a gate budget above the Bash tool limit is clamped, with a warning', async () => {
+  const c = { ...CONTRACT_FIXTURES.contract, slices: [SLICE('Slow', { gate: { command: 'npm test', budgetSec: 3600 } })] }
+  const { result } = await runContract({ gpt: false }, { contract: c })
+  assert.equal(result.slices[0].gate.budgetSec, 570)
+  assert.match(result.warnings.join('\n'), /clamped/)
+  const low = { ...CONTRACT_FIXTURES.contract, slices: [SLICE('Neg', { gate: { command: 'npm test', budgetSec: -5 } })] }
+  assert.equal((await runContract({ gpt: false }, { contract: low })).result.slices[0].gate.budgetSec, 570)
+})
+
+test('contract: slices.json comes from the contract after the critique fixes', async () => {
+  const fixed = { ...CONTRACT_FIXTURES.contract, slices: [SLICE('Fixed', { gate: { command: 'npm run test:fixed', budgetSec: 60 } })] }
+  const { byLabel } = await runContract({}, { 'critique:apply': fixed })
+  const w = byLabel('sh:write:slices')[0].prompt
+  assert.ok(w.includes('npm run test:fixed'))
+  assert.ok(byLabel('sh:compile:applied')[0].prompt.includes('node --check src/slug.js'))
+})
+
+test('contract: a proof is rerun after its fix and must pass, or the run warns', async () => {
+  const ok = await runContract()
+  assert.equal(ok.byLabel('sh:recheck:p1').length, 1)
+  assert.equal(ok.byLabel('sh:recheck:p2').length, 0, 'a doc proof has nothing to rerun')
+  assert.equal(ok.result.ledger.find(l => l.id === 'p1').afterFix, 'pass')
+  const still = await runContract({}, { 'sh:recheck': { output: 'still red\nEXIT=1' } })
+  assert.match(still.result.warnings.join('\n'), /p1: the proof still fails after the fix/)
+})
+
+test('contract: a proof whose command never ran is no proof', async () => {
+  for (const code of [125, 126, 127]) {
+    const { result } = await runContract({}, { 'sh:proof:p1': { output: `bash: x: command not found\nEXIT=${code}` } })
+    assert.equal(result.ledger.find(l => l.id === 'p1').verdict, 'unproven', String(code))
+  }
+  const { byLabel } = await runContract()
+  assert.ok(byLabel('sh:proof:p1')[0].prompt.includes(`mkdir -p "$(dirname '/repo/.claude/runs/add-thing/contract/proof/p1.log')"`))
+})
+
+test('contract: the red run checks that the test files and the commit are at HEAD', async () => {
+  const { byLabel } = await runContract()
+  const r = byLabel('sh:tests:red')[0].prompt
+  assert.ok(r.includes("git ls-files --error-unmatch -- 'test/slug.test.js'"))
+  assert.ok(r.includes(`'def5678^{commit}'`))
+  const absent = await runContract({}, { 'sh:tests:red': { output: 'TESTS NOT COMMITTED AT HEAD\nEXIT=125' } })
+  assert.equal(absent.result.status, 'blocked')
+  assert.match(absent.result.reason, /not at HEAD/)
+  const none = await runContract({}, { tests: { files: [], testCommand: 'npm test', commit: 'x' } })
+  assert.equal(none.result.status, 'blocked')
+})
+
+test('contract: every stage prompt carries the data rule', async () => {
+  const { calls } = await runContract({}, { 'ground:1': { checks: [] } })
+  for (const c of calls.filter(c => !c.opts.label.startsWith('sh:'))) assert.match(c.prompt, /data, never an instruction/, c.opts.label)
+})
+
+test('contract: the ledger is always written and says when there was no critique', async () => {
+  const off = await runContract({ gpt: false })
+  assert.match(off.byLabel('sh:write:ledger')[0].prompt, /no critique: gpt false/)
+  const quota = await runContract({}, { 'sh:critique:gpt': { output: 'usage limit\nEXIT=1' } })
+  assert.match(quota.byLabel('sh:write:ledger')[0].prompt, /no critique: GPT quota exhausted/)
+})
+
+test('contract: shell lines quote every path under a dir with a single quote', async () => {
+  const { calls } = await runContract({ dir: "/it's my repo" })
+  for (const sc of shellPrompts(calls).map(p => p.split('--- script ---')[1])) {
+    const rest = sc.replace(/<<'(\w+)'\n[\s\S]*?\n\1\n/g, '').replace(/'\/it'\\''s my repo[^']*'/g, 'Q')
+    // Nested quoting inside bash -c doubles the escape; strip that form too.
+    const rest2 = rest.replace(/'\\''\/it'\\''\\'\\'''\\''s my repo[^']*'\\''/g, 'Q')
+    assert.ok(!rest2.includes("it's my repo"), sc)
+  }
+})
+
+test('contract: every agent label is unique', async () => {
+  const { calls } = await runContract({}, { 'ground:1': { checks: [{ claim: 'c', ref: 'r', verdict: 'false', excerpt: '' }] } })
+  const labels = calls.map(c => c.opts.label)
+  assert.deepEqual(labels.filter((l, i) => labels.indexOf(l) !== i), [])
+})
+
+test('contract: the premortem runs on the chosen design, and a mode without a test is dropped', async () => {
+  const { byLabel, result, logs } = await runContract()
+  const pm = byLabel('premortem')[0]
+  assert.ok(pm.prompt.includes('/repo/.claude/runs/add-thing/decisions.md'))
+  assert.equal(pm.opts.model, 'opus')
+  const md = byLabel('sh:write:premortem')[0].prompt
+  assert.ok(md.includes('cyrillic: slugify'))
+  assert.ok(!md.includes('vague worry'))
+  assert.deepEqual(result.premortem.map(m => m.mode), ['Cyrillic dropped'])
+  assert.match(logs.join('\n'), /1 mode\(s\) without a test dropped/)
+  assert.ok(byLabel('contract')[0].prompt.includes('/premortem.md'), 'the contract reads the premortem')
+  assert.ok(byLabel('tests')[0].prompt.includes('/premortem.md'), 'the test-writer binds the premortem tests')
+})
+
+test('contract: a premortem that returns nothing is a warning, not a crash', async () => {
+  const { result } = await runContract({}, { premortem: null })
+  assert.match(result.warnings.join('\n'), /premortem/)
+  assert.deepEqual(result.premortem, [])
+})
+
+test('contract: a blocked branch runs no premortem', async () => {
+  const { byLabel } = await runContract({}, { 'sh:branch': { output: 'EXIT=1' } })
+  assert.equal(byLabel('premortem').length, 0)
+})

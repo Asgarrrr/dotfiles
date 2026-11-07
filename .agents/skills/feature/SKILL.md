@@ -1,6 +1,6 @@
 ---
 name: feature
-description: Drive the feature workflow one stage at a time — launch a stage, relay its questions to the user, record the answers in the run dir, launch the next stage. Use when the user says "/feature", or asks for the best-designed implementation of a task and accepts that it takes long. Stages so far — intent, design.
+description: Drive the feature workflow one stage at a time — launch a stage, relay its questions to the user, record the answers in the run dir, launch the next stage. Use when the user says "/feature", or asks for the best-designed implementation of a task and accepts that it takes long. Stages so far — intent, design, contract.
 argument-hint: "<task> | resume <slug>"
 ---
 
@@ -32,6 +32,11 @@ writes the same object to `<runDir>/<stage>.json`.
 
 - `needs-human`: the stage judged the task ill-posed. Show `reason` and `evidence`
   verbatim, and stop. The user reformulates; a new task is a new slug.
+  From `contract`, `needs-human` means the contract still relies on false claims
+  about the code after one revision: the task is not at fault. Show the evidence
+  and stop; the user decides whether to edit the design or restart with a new slug.
+- `blocked`: a precondition or a check failed. Show `reason` and `evidence`
+  verbatim, and stop. Do not fix the cause yourself.
 - `questions`: go to "Ask".
 - `ready`: show the digest and `next`.
 
@@ -67,6 +72,7 @@ the state.
 | --- | --- | --- |
 | `intent` | `task` | `explore/`, `task.md` |
 | `design` | none | `research.md`, `designs/<n>.md` |
+| `contract` | `gpt` (optional) | branch `feature/<slug>`, `premortem.md`, `contract/` |
 
 After `intent` and its answers, launch `design` with the same `dir` and `slug`.
 Run `date +%F` again for `today`: research stamps the registry reads with it.
@@ -79,5 +85,22 @@ only; add no judgement of your own:
 - One line per answer of this stage: `- <id>: <chosen label> — <notes>`.
 - `Judges: agree` or `Judges: split`, with each pass's winner from `judge.passes`.
 
-The next stages are not built yet. After `decisions.md`, report the digest and the
-path of the chosen design, then stop.
+After `decisions.md`, launch `contract` with a fresh `today`. It needs a clean
+working tree in `dir`: if `git status` shows changes, ask the user to commit them
+first. It creates the branch `feature/<slug>` and commits the stubs and tests there.
+
+`gpt` picks the one critique call: omit it for `gpt-6-astra` at xhigh, pass `"sol"`
+for `gpt-6-sol` at high, or `false` for no critique. Pass it only when the user asks.
+A warning that starts with `GPT quota exhausted` means this run had no critique.
+
+After `contract` and its answers, append to `decisions.md` a `## Critique` heading
+and one line per answer: `- <id>: <chosen label> — <notes>`. On `Keep contract`,
+write `declined` in the notes. On `Redesign`, stop: the user restarts at `intent`
+with a new slug and the point in the task.
+
+A `contract` run that stops after it creates `feature/<slug>` leaves that branch
+behind, and a rerun with the same slug is blocked. Tell the user. The user deletes
+the branch, or restarts with a new slug. Never delete it yourself.
+
+The build stage is not built yet. After `contract`, report the digest, the branch,
+and `<runDir>/contract/ledger.md`, then stop.
