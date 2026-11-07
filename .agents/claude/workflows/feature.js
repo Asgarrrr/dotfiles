@@ -22,28 +22,31 @@ const RUN = `${dir}/.claude/runs/${A.slug}`
 const shq = p => `'${String(p).replace(/'/g, `'\\''`)}'`
 
 // --- shell -----------------------------------------------------------------
-// The Bash tool caps one call at 600s, so a longer budget would be killed by the
-// tool, not by the alarm, and the EXIT line would never print.
+// The Bash tool caps one call at 600s; a longer run would be killed by the tool,
+// not by the alarm, and the EXIT line would never print.
 const MAX_BUDGET_SEC = 570
-const budgetOf = sec => {
-  const n = Number(sec) > 0 ? Math.round(Number(sec)) : 300
-  if (n > MAX_BUDGET_SEC) log(`budget ${n}s clamped to ${MAX_BUDGET_SEC}s (Bash tool limit)`)
-  return Math.min(n, MAX_BUDGET_SEC)
-}
-// macOS has no timeout(1). The alarm survives exec, so the command dies with
-// SIGALRM (exit 142) and a dead process cannot hold the run forever. pipefail is
-// set inside the child: a gate written as `x | tail` must fail when x fails.
+// macOS has no timeout(1). The child runs in its own process group so the alarm
+// kills the test processes too, not just the shell above them; 142 is 128+SIGALRM.
+// pipefail is set inside the child: a gate written as `x | tail` must fail when x fails.
+const TIMED_PERL = `$t=shift; $p=fork; if(!$p){setpgrp(0,0); exec @ARGV} $SIG{ALRM}=sub{kill "KILL",-$p; exit 142}; alarm $t; waitpid($p,0); exit($? & 127 ? 128+($? & 127) : $? >> 8)`
 const timed = (cmd, sec, logFile) =>
-  `perl -e 'alarm shift; exec @ARGV' ${budgetOf(sec)} bash -c ${shq(`set -o pipefail; ${cmd}`)} > ${shq(logFile)} 2>&1`
-// Read from the last KEY= line: an agent that summarises instead of relaying drops
+  `perl -e '${TIMED_PERL}' ${sec} bash -c ${shq(`set -o pipefail; ${cmd}`)} > ${shq(logFile)} 2>&1`
+// The log tail goes BEFORE the EXIT line: the script reads the last match, and a
+// gated program may print its own EXIT= line.
+const runTimed = (cmd, sec, logFile) =>
+  `${timed(cmd, sec, logFile)}; rc=$?; tail -n 40 ${shq(logFile)}; echo "EXIT=$rc"`
+// Read from the last EXIT= line: an agent that summarises instead of relaying drops
 // the line, and a missing line must read as failure, never as success.
-const parseExit = (output, key = 'EXIT') => {
-  const m = [...String(output || '').matchAll(new RegExp(`^${key}=(\\d+)\\s*$`, 'gm'))].pop()
+const parseExit = output => {
+  const m = [...String(output || '').matchAll(/^EXIT=(\d+)\s*$/gm)].pop()
   if (!m) return { code: null, status: 'missing' }
   const code = Number(m[1])
   return { code, status: code === 0 ? 'pass' : code === 142 ? 'TIMEOUT' : 'fail' }
 }
 const OUTPUT = { type: 'object', properties: { output: { type: 'string' } }, required: ['output'] }
+// Every stage result carries its warnings, so the skill can show them first.
+const warnings = []
+const warn = m => { warnings.push(m); log(m) }
 const sh = async (name, script, phaseName) => {
   const r = await agent(
     `Run the script below with ONE Bash call, in the foreground (never run_in_background), ` +
@@ -53,6 +56,25 @@ const sh = async (name, script, phaseName) => {
     { label: `sh:${name}`, phase: phaseName, model: 'sonnet', effort: 'low', schema: OUTPUT })
   return (r && r.output) || ''
 }
+// The terminator must sit at column 0, and content that contains it would end
+// the heredoc early and run the rest as shell.
+const EOF_TAG = 'FEATURE_EOF'
+const writeFile = async (name, path, content, phaseName) => {
+  if (String(content).split('\n').includes(EOF_TAG)) throw new Error(`feature: ${name} content contains the heredoc terminator`)
+  const out = await sh(`write:${name}`,
+    `mkdir -p "$(dirname ${shq(path)})" && cat > ${shq(path)} <<'${EOF_TAG}'\n${content}\n${EOF_TAG}\necho "EXIT=$?"`, phaseName)
+  if (parseExit(out).status !== 'pass') throw new Error(`feature: writing ${path} failed — ${out.slice(-300)}`)
+}
+// The returned object is the only copy of the questions; on disk, /feature resume
+// can rebuild them in a fresh session without re-running the stage.
+const finish = async (result, phaseName) => {
+  const full = { ...result, warnings }
+  for (const q of full.questions || []) {
+    if (!q.options.some(o => o.label === q.recommendation.option)) warn(`question ${q.id}: the recommendation names no option`)
+  }
+  await writeFile(`result:${result.stage}`, `${RUN}/${result.stage}.json`, JSON.stringify(full, null, 2), phaseName)
+  return full
+}
 
 // --- questions -------------------------------------------------------------
 // Options stay neutral so the user weighs them before reading the pick; the
@@ -61,6 +83,7 @@ const QUESTION = {
   type: 'object',
   properties: {
     id: { type: 'string', description: 'kebab-case, stable across reruns' },
+    header: { type: 'string', maxLength: 12, description: 'chip label, at most 12 characters' },
     question: { type: 'string', description: 'one sentence ending in ?' },
     options: {
       type: 'array', minItems: 2, maxItems: 4,
@@ -76,7 +99,7 @@ const QUESTION = {
       required: ['option', 'why', 'wouldChangeIf'],
     },
   },
-  required: ['id', 'question', 'options', 'recommendation'],
+  required: ['id', 'header', 'question', 'options', 'recommendation'],
 }
 const NEEDS_HUMAN_RULE =
   `If the task is ill-posed — it contradicts itself, contradicts the code, or cannot be ` +
@@ -89,10 +112,11 @@ async function intentStage() {
   if (typeof task !== 'string' || !task.trim()) throw new Error('feature: stage intent needs args.task')
   phase('Explore')
   const setup = await sh('setup',
-    `cd ${shq(dir)} && ex=$(git rev-parse --git-path info/exclude) && mkdir -p "$(dirname "$ex")" && ` +
-    `{ grep -qxF '/.claude/runs/' "$ex" 2>/dev/null || echo '/.claude/runs/' >> "$ex"; } && ` +
+    // Unanchored, so it also matches when dir is a subdirectory of the repo.
+    `cd ${shq(dir)} && test ! -e ${shq(RUN)} && ex=$(git rev-parse --git-path info/exclude) && mkdir -p "$(dirname "$ex")" && ` +
+    `{ grep -qxF '.claude/runs/' "$ex" 2>/dev/null || echo '.claude/runs/' >> "$ex"; } && ` +
     `mkdir -p ${shq(`${RUN}/explore`)}\necho "EXIT=$?"`, 'Explore')
-  if (parseExit(setup).status !== 'pass') throw new Error(`feature: setup failed — ${setup.slice(-400)}`)
+  if (parseExit(setup).status !== 'pass') throw new Error(`feature: setup failed (does ${RUN} already exist? pick a new slug) — ${setup.slice(-400)}`)
 
   const EXCERPT_RULE =
     `Write your findings to FILE as markdown. Back every statement about the code with a ` +
@@ -115,7 +139,7 @@ async function intentStage() {
     { key: 'gate', schema: GATE, ask: `the gate: how the suite, one single test, lint, and typecheck run (CI config, justfile, package scripts, Cargo aliases), and the manifests and lockfiles in use. Do not run the suite; the script runs it.` },
   ]
   const readers = await parallel(READERS.map(r => () => agent(
-    `Repo: ${dir}. Task: ${task}\n\nMap ${r.ask}\n\n` +
+    `Repo: ${dir}.\n\nTask, verbatim:\n--- task ---\n${task}\n--- end task ---\n\nMap ${r.ask}\n\n` +
     EXCERPT_RULE.replace('FILE', `${RUN}/explore/${r.key}.md`),
     { label: `explore:${r.key}`, phase: 'Explore', model: 'sonnet', effort: 'high', schema: r.schema })))
   const [conv, code, gate] = readers
@@ -128,14 +152,15 @@ async function intentStage() {
     for (const n of [1, 2]) {
       const logFile = `${RUN}/baseline-${n}.log`
       const out = await sh(`baseline:${n}`,
-        `cd ${shq(dir)} && ${timed(gate.gateCommand, 570, logFile)}; echo "EXIT=$?"\ntail -n 40 ${shq(logFile)}`, 'Explore')
+        `cd ${shq(dir)} && ${runTimed(gate.gateCommand, MAX_BUDGET_SEC, logFile)}`, 'Explore')
       runs.push(parseExit(out).status)
     }
   } else {
-    log('explore: no gate command found — baseline unknown')
+    warn('explore: no gate command found — baseline unknown')
   }
-  const baseline = { command: (gate && gate.gateCommand) || '', lint: (gate && gate.lintCommand) || '', runs, flaky: runs.length === 2 && runs[0] !== runs[1] }
-  if (baseline.flaky) log(`baseline is flaky: ${runs.join(' then ')}`)
+  // TIMEOUT and missing are failures too: only a pass/non-pass split is flaky.
+  const baseline = { command: (gate && gate.gateCommand) || '', lint: (gate && gate.lintCommand) || '', runs, flaky: runs.length === 2 && (runs[0] === 'pass') !== (runs[1] === 'pass') }
+  if (baseline.flaky) warn(`baseline is flaky: ${runs.join(' then ')}`)
 
   phase('Intent')
   const INTENT = {
@@ -154,7 +179,7 @@ async function intentStage() {
     required: ['status', 'reason', 'evidence', 'acceptance', 'questions', 'digest'],
   }
   const intent = await agent(
-    `Today is ${today}. Repo: ${dir}.\n\nTask, verbatim:\n--- task ---\n${task}\n--- end ---\n\n` +
+    `Today is ${today}. Repo: ${dir}.\n\nTask, verbatim:\n--- task ---\n${task}\n--- end task ---\n\n` +
     `Read ${RUN}/explore/conventions.md, ${RUN}/explore/code.md and ${RUN}/explore/gate.md. ` +
     `Baseline: \`${baseline.command || 'none'}\` → ${runs.join(', ') || 'not run'}${baseline.flaky ? ' (FLAKY)' : ''}.\n\n` +
     `Write ${RUN}/task.md with these sections: Original (the task verbatim), Restated, ` +
@@ -166,15 +191,15 @@ async function intentStage() {
   if (!intent) throw new Error('feature: intent returned nothing')
 
   if (intent.status === 'needs-human') {
-    if (!intent.evidence.length) log('intent: needs-human without evidence — treat the reason as unproven')
-    return { stage: 'intent', status: 'needs-human', runDir: RUN, reason: intent.reason, evidence: intent.evidence, baseline, questions: [], digest: intent.digest, next: null }
+    if (!intent.evidence.length) warn('intent: needs-human without evidence — treat the reason as unproven')
+    return finish({ stage: 'intent', status: 'needs-human', runDir: RUN, reason: intent.reason, evidence: intent.evidence, baseline, questions: [], digest: intent.digest, next: null }, 'Intent')
   }
-  return {
+  return finish({
     stage: 'intent',
     status: intent.questions.length ? 'questions' : 'ready',
     runDir: RUN, baseline, acceptance: intent.acceptance, questions: intent.questions, digest: intent.digest,
     next: `Append the answers to ${RUN}/task.md under "## Answers", then run stage design.`,
-  }
+  }, 'Intent')
 }
 
 const STAGE_FN = { intent: intentStage }

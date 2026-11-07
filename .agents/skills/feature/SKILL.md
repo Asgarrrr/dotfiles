@@ -19,15 +19,16 @@ question for the user. The run dir holds the state; the digest is all you need.
 1. Fix the arguments:
    - `task`: the user's words, verbatim.
    - `dir`: the absolute path of the repo, default the current working directory.
-   - `slug`: kebab-case, 2-5 words from the task. Check that `<dir>/.claude/runs/<slug>/`
-     does not exist yet; pick another slug if it does.
+   - `slug`: kebab-case, 2-5 words from the task. The stage refuses a slug whose
+     run dir already exists; pick another one.
    - `today`: the output of `date +%F`.
 2. Launch `Workflow({name: "feature-stage", args: {stage: "intent", task, dir, slug, today}})`.
 3. Wait for the completion notification. Do not poll.
 
 ## Read the result
 
-Every stage returns `status`, `digest`, `questions`, and `next`.
+Every stage returns `status`, `warnings`, `digest`, `questions`, and `next`, and
+writes the same object to `<runDir>/<stage>.json`.
 
 - `needs-human`: the stage judged the task ill-posed. Show `reason` and `evidence`
   verbatim, and stop. The user reformulates; a new task is a new slug.
@@ -43,8 +44,9 @@ For each question:
 
 1. In your message, show the question's `recommendation.option`, `why`, and
    `wouldChangeIf` — apart from the options.
-2. Call AskUserQuestion with the options in the order given. Keep each `label` and
-   `description` as returned. Do not add "(Recommended)" and do not reorder.
+2. Call AskUserQuestion with the `header`, `question`, and options in the order
+   given. Keep each `label` and `description` as returned. Do not add
+   "(Recommended)" and do not reorder.
 3. Append the answer to `<runDir>/task.md` under `## Answers`, one line per
    question: `- <id>: <chosen label> — <the user's notes, if any>`. Create the
    heading if it is missing.
@@ -53,8 +55,9 @@ Batch up to four questions per AskUserQuestion call.
 
 ## Resume
 
-`/feature resume <slug>`: read `<dir>/.claude/runs/<slug>/task.md`, report which
-stage last ran and which answers are recorded, and continue from there. If the
+`/feature resume <slug>`: in `<dir>/.claude/runs/<slug>/`, the latest `<stage>.json`
+says which stage ran last and holds its questions verbatim. `task.md` holds the
+recorded answers. Ask the questions that have no answer, then continue. If the
 context is above ~100k tokens, offer a fresh session first; the run dir carries
 the state.
 

@@ -11,7 +11,7 @@ const AsyncFunction = (async () => {}).constructor
 const script = new AsyncFunction('args', 'agent', 'parallel', 'phase', 'log', SRC)
 
 const question = id => ({
-  id, question: `Which ${id}?`,
+  id, header: id.slice(0, 12), question: `Which ${id}?`,
   options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }],
   recommendation: { option: 'A', why: 'w', wouldChangeIf: 'c' },
 })
@@ -83,12 +83,16 @@ test('every heredoc in a shell prompt has its terminator at column 0', async () 
   }
 })
 
-test('shell lines quote a dir that contains a space or a single quote', async () => {
+test('shell lines quote every path under a dir that contains a space or a single quote', async () => {
   const { calls } = await run({ ...INTENT, dir: "/it's my repo" })
-  const prompts = shellPrompts(calls)
-  assert.ok(prompts.length)
-  for (const p of prompts) {
-    if (p.includes('cd ')) assert.ok(p.includes(`cd '/it'\\''s my repo'`), p)
+  const scripts = shellPrompts(calls).map(p => p.split('--- script ---')[1])
+  assert.ok(scripts.length)
+  // Strip every correctly quoted occurrence; any raw one left would split the word.
+  for (const sc of scripts) {
+    // Heredoc bodies are data, not shell words.
+    const rest = sc.replace(/<<'(\w+)'\n[\s\S]*?\n\1\n/g, '')
+      .replace(/'\/it'\\''s my repo[^']*'/g, 'Q')
+    assert.ok(!rest.includes("it's my repo") && !rest.includes("/it'"), sc)
   }
 })
 
@@ -103,7 +107,8 @@ test('the run dir is excluded from git through info/exclude', async () => {
   const { byLabel } = await run(INTENT)
   const setup = byLabel('sh:setup')[0].prompt
   assert.match(setup, /rev-parse --git-path info\/exclude/)
-  assert.match(setup, /\/\.claude\/runs\//)
+  assert.match(setup, /echo '\.claude\/runs\/'/, 'unanchored, so a subdirectory dir matches too')
+  assert.ok(setup.includes("test ! -e '/repo/.claude/runs/add-thing'"), 'a reused slug is refused')
 })
 
 // --- exit codes ------------------------------------------------------------
@@ -115,20 +120,36 @@ test('the baseline runs twice, and the script reads EXIT itself', async () => {
   })
   assert.equal(byLabel('sh:baseline:1').length, 1)
   assert.equal(byLabel('sh:baseline:2').length, 1)
-  assert.match(byLabel('sh:baseline:1')[0].prompt, /alarm shift; exec @ARGV/)
+  const b = byLabel('sh:baseline:1')[0].prompt
+  assert.match(b, /setpgrp\(0,0\)/, 'the alarm kills the whole process group')
+  assert.ok(b.indexOf('tail -n') < b.indexOf('echo "EXIT=$rc"'), 'the log tail prints before the EXIT line')
   // A gate written as `x | tail` must fail when x fails, so pipefail goes inside the child.
   assert.ok(byLabel('sh:baseline:1')[0].prompt.includes(`bash -c 'set -o pipefail; npm test'`))
   assert.deepEqual(result.baseline.runs, ['pass', 'pass'])
   assert.equal(result.baseline.flaky, false)
 })
 
-test('EXIT=142 is TIMEOUT, a missing EXIT line is a failure, a split is flaky', async () => {
+test('EXIT=142 is TIMEOUT, a missing EXIT line is a failure, and neither is flaky', async () => {
   const { result } = await run(INTENT, {
     'sh:baseline:1': { output: 'EXIT=142' },
     'sh:baseline:2': { output: 'all good, trust me' },
   })
   assert.deepEqual(result.baseline.runs, ['TIMEOUT', 'missing'])
+  assert.equal(result.baseline.flaky, false)
+})
+
+test('only a pass/fail split is flaky, and it is a warning', async () => {
+  const { result } = await run(INTENT, { 'sh:baseline:1': { output: 'EXIT=0' }, 'sh:baseline:2': { output: 'EXIT=1' } })
   assert.equal(result.baseline.flaky, true)
+  assert.match(result.warnings.join('\n'), /flaky/)
+})
+
+test('the last EXIT line wins, so a program line before it cannot pass a red suite', async () => {
+  const { result } = await run(INTENT, {
+    'sh:baseline:1': { output: 'step EXIT=0\nEXIT=0\n1 failing\nEXIT=1' },
+    'sh:baseline:2': { output: 'EXIT=1' },
+  })
+  assert.deepEqual(result.baseline.runs, ['fail', 'fail'])
 })
 
 test('a failing setup stops the run before any reader', async () => {
@@ -175,6 +196,20 @@ test('intent questions come back with neutral options and a separate recommendat
   assert.equal(result.questions.length, 1)
   assert.equal(result.questions[0].recommendation.option, 'A')
   assert.match(result.next, /design/)
+})
+
+test('the stage result is written to the run dir for resume', async () => {
+  const { byLabel, result } = await run(INTENT)
+  const w = byLabel('sh:write:result:intent')[0].prompt
+  assert.ok(w.includes("cat > '/repo/.claude/runs/add-thing/intent.json'"))
+  assert.ok(w.includes('"id": "scope"'))
+  assert.deepEqual(result.warnings, [])
+})
+
+test('a recommendation that names no option is a warning', async () => {
+  const q = { ...question('scope'), recommendation: { option: 'C', why: 'w', wouldChangeIf: 'c' } }
+  const { result } = await run(INTENT, { intent: { ...FIXTURES.intent, questions: [q] } })
+  assert.match(result.warnings.join('\n'), /scope/)
 })
 
 test('every agent label is unique within a run', async () => {
