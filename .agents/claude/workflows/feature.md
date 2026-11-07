@@ -17,7 +17,7 @@ does not track.
 | `today` | required | `YYYY-MM-DD`. The script has no clock; research dates its reads with it. |
 | `task` | required by `intent` | What to build. |
 | `gpt` | `"astra"` | `contract` only: the critique call. `"sol"` is cheaper, `false` skips it. |
-| `from` | `0` | `build` only: the slice index to resume at. The slice count resumes at the review. |
+| `from` | `0` | `build` only: the slice index to resume at. A `from` equal to the slice count skips every slice and starts at the review. |
 
 ## Overview
 
@@ -33,8 +33,9 @@ flowchart TD
     build --> out([ready: commits, ADR, retro.md])
 ```
 
-Every stage can end `blocked` or `needs-human` instead. `build` can also end
-`invalidated`, when an experiment slice measures against its hypothesis.
+Every stage can end `needs-human` instead. `contract` and `build` can also end
+`blocked`. `build` can also end `invalidated`, when an experiment slice
+measures against its hypothesis.
 
 ## Build
 
@@ -89,7 +90,12 @@ Per feature run, it reports the status of each stage, `groundFalse`, the ledger
 verdicts, the build findings by source and outcome, the mutation results, and
 the cost. `--merged REF` counts the lines changed after a ready build, from the
 branch tip at the end of the run to `REF`, on the files the run changed. Later
-unrelated edits to those files count too, so read it as an upper bound.
+unrelated edits to those files count too, so read it as an upper bound. The
+tip is the last branch commit before the run ended. A rebase gives every commit
+a later date, and a deleted branch has no tip, so measure before either.
+
+The stop rates count finished runs only: a feature stage with a result, and a
+big-feature run in `executed`, `blocked` or `paused` mode.
 
 ## Known limits
 
