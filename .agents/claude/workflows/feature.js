@@ -549,7 +549,8 @@ async function contractAfterBranch(branch, base, from, CONTEXT) {
     `the repo (bodies may be todo!()/throw), with every field the build adds, private ones included: ` +
     `the tests are written against the stubs and must compile against the final shapes. No slice edits a ` +
     `test file; the build forbids it. The lint runs after every slice: a stub that only a later slice uses ` +
-    `carries the narrowest expect for its unused warning (e.g. #[expect(dead_code)]), and the slice that first ` +
+    `carries the narrowest expect for its unused warning (e.g. #[expect(dead_code)], or ` +
+    `#[cfg_attr(not(test), expect(dead_code))] when a unit test already uses it), and the slice that first ` +
     `uses it removes that line. Then write ${RUN}/contract/contract.md with, per brick, ` +
     `its file, its signatures copied from the stubs, its invariants, and the facts about the ` +
     `existing code it relies on as claims with path:line. Then cut the build into vertical ` +
