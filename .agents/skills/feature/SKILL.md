@@ -1,6 +1,6 @@
 ---
 name: feature
-description: Drive the feature workflow one stage at a time — launch a stage, relay its questions to the user, record the answers in the run dir, launch the next stage. Use when the user says "/feature", or asks for the best-designed implementation of a task and accepts that it takes long. Stages so far — intent.
+description: Drive the feature workflow one stage at a time — launch a stage, relay its questions to the user, record the answers in the run dir, launch the next stage. Use when the user says "/feature", or asks for the best-designed implementation of a task and accepts that it takes long. Stages so far — intent, design.
 argument-hint: "<task> | resume <slug>"
 ---
 
@@ -66,6 +66,18 @@ the state.
 | Stage | Args beyond dir, slug, today | Writes |
 | --- | --- | --- |
 | `intent` | `task` | `explore/`, `task.md` |
+| `design` | none | `research.md`, `designs/<n>.md`, `premortem.md` |
 
-The next stages are not built yet. After `intent`, report the digest, the answers,
-and the path of `task.md`, then stop.
+After `intent` and its answers, launch `design` with the same `dir`, `slug`, and
+`today`.
+
+After `design` and its answers, write `<runDir>/decisions.md` yourself. Copy facts
+only; add no judgement of your own:
+
+- `Chosen design: designs/<n>.md` — the `leader`, or the design the user picked
+  on `design-choice`.
+- One line per answer of this stage: `- <id>: <chosen label> — <notes>`.
+- `Judges: agree` or `Judges: split`, with each pass's winner from `judge.passes`.
+
+The next stages are not built yet. After `decisions.md`, report the digest, the
+path of the chosen design, and the premortem modes, then stop.

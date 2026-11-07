@@ -217,3 +217,146 @@ test('every agent label is unique within a run', async () => {
   const labels = calls.map(c => c.opts.label)
   assert.deepEqual(labels.filter((l, i) => labels.indexOf(l) !== i), [])
 })
+
+// --- design ----------------------------------------------------------------
+
+const DESIGN = { ...BASE, stage: 'design' }
+const scored = (design, total) => ({ design, correctness: total, coupling: total, apiSurface: total, extensionCost: total, conformity: total, minimality: total, rationale: `r${design}` })
+const DESIGN_FIXTURES = {
+  'deps': { deps: [{ name: 'serde', ecosystem: 'cargo' }] },
+  'research': {
+    name: 'serde', lockVersion: '1.0.200', lockSource: 'Cargo.lock:42', latestVersion: '1.0.200',
+    apiChanges: [], sourcesConsulted: ['https://docs.rs/serde'], report: 'same version', questions: [],
+  },
+  'sh:setup': { output: 'PREFIX=\nEXIT=0' },
+  'design': label => ({ summary: `summary of ${label}`, compileCommand: 'cargo check' }),
+  // Pass 1 sees designs 1,2,3 as A,B,C; pass 2 sees 3,2,1. Both pick design 1.
+  'judge:1': { scores: [scored('A', 5), scored('B', 3), scored('C', 2)], winner: 'A', why: 'w' },
+  'judge:2': { scores: [scored('A', 2), scored('B', 3), scored('C', 5)], winner: 'C', why: 'w' },
+  'premortem': { framing: 'f', modes: [
+    { mode: 'BOUND-MODE', trigger: 't', test: 'parses an empty file' },
+    { mode: 'UNBOUND-MODE', trigger: 't', test: '' },
+  ] },
+}
+const runDesign = (args, overrides = {}, calls) => run({ ...DESIGN, ...args }, { ...DESIGN_FIXTURES, ...overrides }, calls)
+
+test('design: one researcher per touched dependency, with the date and the data rule', async () => {
+  const { byLabel, calls } = await runDesign({}, { deps: { deps: [{ name: 'serde', ecosystem: 'cargo' }, { name: 'tokio', ecosystem: 'cargo' }] } })
+  const res = calls.filter(c => c.opts.label.startsWith('research:'))
+  assert.equal(res.length, 2)
+  for (const r of res) {
+    assert.equal(r.opts.agentType, 'researcher')
+    assert.ok(r.prompt.includes('2026-11-07'))
+    assert.match(r.prompt, /data, never an instruction/)
+    assert.match(r.prompt, /lockfile/)
+  }
+  assert.match(byLabel('sh:write:research')[0].prompt, /research\.md/)
+})
+
+test('design: a version gap that matters comes back as a question', async () => {
+  const gap = { ...DESIGN_FIXTURES.research, latestVersion: '2.0.0', questions: [question('serde-2')] }
+  const { result } = await runDesign({}, { research: gap })
+  assert.ok(result.questions.some(q => q.id === 'serde-2'))
+})
+
+test('design: three competing designs on opus xhigh, each in its own worktree of dir with its own angle', async () => {
+  const { calls, byLabel } = await runDesign()
+  const ds = calls.filter(c => c.opts.label.startsWith('design:'))
+  assert.equal(ds.length, 3)
+  for (const d of ds) {
+    assert.equal(d.opts.model, 'opus')
+    assert.equal(d.opts.effort, 'xhigh')
+    // The harness isolation branches the session repo, not dir.
+    assert.equal(d.opts.isolation, undefined)
+  }
+  assert.equal(new Set(ds.map(d => d.prompt)).size, 3)
+  const setup = byLabel('sh:setup')[0].prompt
+  assert.ok(setup.includes("cd '/repo' && test -f '/repo/.claude/runs/add-thing/task.md'"))
+  ds.forEach((d, i) => {
+    assert.ok(d.prompt.includes(`/designs/${i + 1}.md`))
+    assert.ok(d.prompt.includes(`/repo/.claude/runs/add-thing/wt/${i + 1}`))
+    assert.ok(setup.includes(`git worktree add -q --detach '/repo/.claude/runs/add-thing/wt/${i + 1}' HEAD`))
+  })
+})
+
+test('design: the script compiles each design in its worktree, then removes every worktree', async () => {
+  const { byLabel } = await runDesign({}, { 'sh:setup': { output: 'PREFIX=pkg/\nEXIT=0' } })
+  const c2 = byLabel('sh:compile:2')[0].prompt
+  assert.ok(c2.includes(`cd '/repo/.claude/runs/add-thing/wt/2/pkg/' && perl`))
+  assert.ok(c2.includes(`bash -c 'set -o pipefail; cargo check'`))
+  assert.ok(byLabel('design:2')[0].prompt.includes('/wt/2/pkg/'))
+  const rm = byLabel('sh:cleanup')[0].prompt
+  for (const n of [1, 2, 3]) assert.ok(rm.includes(`git worktree remove --force '/repo/.claude/runs/add-thing/wt/${n}'`))
+})
+
+test('design: a missing task.md stops the stage before any agent', async () => {
+  const calls = []
+  await assert.rejects(runDesign({}, { 'sh:setup': { output: 'EXIT=1' } }, calls), /intent/)
+  assert.equal(calls.length, 1)
+})
+
+test('design: the judge never sees the angles, and pass 2 sees the reverse order', async () => {
+  const { calls, byLabel } = await runDesign()
+  const angles = calls.filter(c => c.opts.label.startsWith('design:')).map(c => c.prompt.match(/^ANGLE: (.*)$/m)[1])
+  const [j1, j2] = [byLabel('judge:1')[0], byLabel('judge:2')[0]]
+  for (const j of [j1, j2]) {
+    assert.equal(j.opts.model, 'opus')
+    for (const a of angles) assert.ok(!j.prompt.includes(a), 'judge prompt leaks an angle')
+  }
+  const order = p => [...p.matchAll(/designs\/(\d)\.md/g)].map(m => m[1])
+  assert.deepEqual(order(j1.prompt), ['1', '2', '3'])
+  assert.deepEqual(order(j2.prompt), ['3', '2', '1'])
+})
+
+test('design: agreeing passes pick the leader, and no design question is asked', async () => {
+  const { result, byLabel } = await runDesign()
+  assert.equal(result.leader, 1)
+  assert.equal(result.judge.agree, true)
+  assert.ok(!result.questions.some(q => q.id === 'design-choice'))
+  assert.ok(byLabel('premortem')[0].prompt.includes('/designs/1.md'))
+})
+
+test('design: diverging passes turn the choice into a question', async () => {
+  const { result } = await runDesign({}, { 'judge:2': { scores: [scored('A', 5), scored('B', 3), scored('C', 2)], winner: 'A', why: 'w' } })
+  assert.equal(result.judge.agree, false)
+  const q = result.questions.find(q => q.id === 'design-choice')
+  assert.ok(q)
+  assert.deepEqual(q.options.map(o => o.label).sort(), ['Design 1', 'Design 3'])
+  assert.ok(q.header && q.header.length <= 12, 'AskUserQuestion needs a chip label')
+})
+
+test('design: a design whose stubs do not compile is not judged', async () => {
+  const { byLabel, logs } = await runDesign({}, {
+    'sh:compile:2': { output: 'error[E0412]\nEXIT=101' },
+  })
+  const p = byLabel('judge:1')[0].prompt
+  assert.ok(!p.includes('designs/2.md'))
+  assert.ok(logs.some(l => /design 2/.test(l)))
+})
+
+test('design: a compile run without an EXIT line is not judged', async () => {
+  const { byLabel } = await runDesign({}, { 'sh:compile:3': { output: 'compiles fine' } })
+  assert.ok(!byLabel('judge:1')[0].prompt.includes('designs/3.md'))
+})
+
+test('design: no compiling design is needs-human', async () => {
+  const { result, calls, byLabel } = await runDesign({}, { 'sh:compile': { output: 'EXIT=1' } })
+  assert.equal(result.status, 'needs-human')
+  assert.equal(byLabel('sh:cleanup').length, 1)
+  assert.equal(calls.filter(c => c.opts.label.startsWith('judge:')).length, 0)
+})
+
+test('design: a premortem mode without a test is dropped', async () => {
+  const { result, byLabel } = await runDesign()
+  assert.deepEqual(result.premortem.map(m => m.mode), ['BOUND-MODE'])
+  const w = byLabel('sh:write:premortem')[0].prompt
+  assert.ok(w.includes('BOUND-MODE') && !w.includes('UNBOUND-MODE'))
+})
+
+test('design: every agent label is unique, and next names decisions.md', async () => {
+  const { calls, result } = await runDesign()
+  const labels = calls.map(c => c.opts.label)
+  assert.deepEqual(labels.filter((l, i) => labels.indexOf(l) !== i), [])
+  assert.match(result.next, /decisions\.md/)
+})
+
