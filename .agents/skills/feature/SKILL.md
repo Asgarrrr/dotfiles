@@ -1,6 +1,6 @@
 ---
 name: feature
-description: Drive the feature workflow one stage at a time — launch a stage, relay its questions to the user, record the answers in the run dir, launch the next stage. Use when the user says "/feature", or asks for the best-designed implementation of a task and accepts that it takes long. Stages so far — intent, design, contract.
+description: Drive the feature workflow one stage at a time — launch a stage, relay its questions to the user, record the answers in the run dir, launch the next stage. Use when the user says "/feature", or asks for the best-designed implementation of a task and accepts that it takes long. Stages — intent, design, contract, build.
 argument-hint: "<task> | resume <slug>"
 ---
 
@@ -37,6 +37,8 @@ writes the same object to `<runDir>/<stage>.json`.
   and stop; the user decides whether to edit the design or restart with a new slug.
 - `blocked`: a precondition or a check failed. Show `reason` and `evidence`
   verbatim, and stop. Do not fix the cause yourself.
+- `invalidated`: from `build` only. An experiment slice measured a result that
+  invalidates its hypothesis. Show `reason` and `measure` verbatim, and stop.
 - `questions`: go to "Ask".
 - `ready`: show the digest and `next`.
 
@@ -73,6 +75,7 @@ the state.
 | `intent` | `task` | `explore/`, `task.md` |
 | `design` | none | `research.md`, `designs/<n>.md` |
 | `contract` | `gpt` (optional) | branch `feature/<slug>`, `premortem.md`, `contract/` |
+| `build` | `from` (optional, default 0) | commits on `feature/<slug>`, `build/`, `retro.md`, an ADR |
 
 After `intent` and its answers, launch `design` with the same `dir` and `slug`.
 Run `date +%F` again for `today`: research stamps the registry reads with it.
@@ -104,5 +107,15 @@ branch the run started from: `from` in the result (empty on a detached HEAD, the
 use `base`). Before a new slug or a rerun, the user runs `git switch <from>`, then
 deletes `feature/<slug>` or keeps it. Never switch or delete yourself.
 
-The build stage is not built yet. After `contract`, report the digest, the branch,
-and `<runDir>/contract/ledger.md`, then stop.
+After `contract` and its critique answers, launch `build` with a fresh `today`. It
+needs a clean tree, checked out on `feature/<slug>`. It builds the slices in order,
+then reviews, fixes, and gates the whole branch.
+
+A `build` that ends `blocked` or `needs-human` returns `at`, the index of the slice
+where it stopped. The user fixes the cause on the branch. Then launch `build` again
+with `from: <at>`; the slices before it stay as committed. An `at` equal to the slice
+count resumes at the review.
+
+After a `ready` build, show the digest, `findings` with each outcome, `adr`, and
+`next`. Point the user to `<runDir>/retro.md`: it proposes rules, and the user
+decides which ones to adopt. Do not push, open a PR, or edit a rule file yourself.

@@ -770,3 +770,288 @@ test('contract: an absolute test path under the repo is checked relative to it',
   assert.ok(byLabel('sh:tests:red')[0].prompt.includes("git cat-file -e 'HEAD:test/slug.test.js'"))
   assert.deepEqual(result.tests.files, ['test/slug.test.js'])
 })
+
+// --- build -----------------------------------------------------------------
+
+const BUILD = { ...BASE, stage: 'build' }
+const CONTRACT_JSON = { stage: 'contract', status: 'ready', branch: 'feature/add-thing', base: 'abc1234', groundFalse: 0, ledger: [], tests: { files: ['test/slug.test.js'], command: 'npm test', commit: 'def5678' } }
+const SLICES_JSON = {
+  branch: 'feature/add-thing', base: 'abc1234', compile: 'node --check src/slug.js', suite: 'npm test', lint: 'npm run lint',
+  mutation: 'npx stryker run --diff DIFF', slices: [SLICE('Accents', { gate: { command: 'node --test test/a.test.js', budgetSec: 120 } }), SLICE('Drop chars', { risk: 'high', gate: { command: 'node --test test/b.test.js', budgetSec: 60 } })],
+}
+const INTENT_JSON = { stage: 'intent', baseline: { command: 'npm test', lint: '', runs: ['pass', 'pass'], flaky: false } }
+const files = ({ contract = CONTRACT_JSON, slices = SLICES_JSON, intent = INTENT_JSON } = {}) =>
+  [['contract', contract], ['slices', slices], ['intent', intent]].map(([k, v]) => `--- ${k} ---\n${JSON.stringify(v)}\n\n--- end ${k} ---`).join('\n')
+const preflight = (o = {}) => ({ output: `BRANCH=${o.branch || 'feature/add-thing'}\nHEAD=h0\nPREFIX=\n${files(o)}\nEXIT=0` })
+const IMPL = { status: 'done', reason: '', evidence: [], decisions: ['IMPL-SECRET used NFD'], measure: '', invalidated: false }
+const BUILD_FIXTURES = {
+  'sh:preflight': preflight(),
+  'impl': IMPL,
+  'sh:check': label => ({ output: `HEAD=head-${label}\nEXIT=0` }),
+  'peer': { findings: [] },
+  'review': { findings: [] },
+  'redteam': { findings: [] },
+  'fix': { applied: [], declined: [] },
+  'retro': { adr: 'docs/adr/0001-add-thing.md', commit: 'aaa1111', rules: [{ rule: 'r', where: 'CLAUDE.md', why: 'slice 2 retried' }] },
+}
+const runBuild = (args, overrides = {}, calls) => run({ ...BUILD, ...args }, { ...BUILD_FIXTURES, ...overrides }, calls)
+const nonShell = calls => calls.filter(c => !c.opts.label.startsWith('sh:'))
+
+test('build: a clean run builds every slice in order, gates each, and ends ready', async () => {
+  const { calls, result, byLabel } = await runBuild()
+  assert.equal(result.status, 'ready', JSON.stringify(result))
+  const labels = calls.map(c => c.opts.label)
+  const at = l => labels.indexOf(l)
+  assert.ok(at('impl:1') < at('sh:gate:1') && at('sh:gate:1') < at('sh:lint:1') && at('sh:lint:1') < at('peer:1') && at('peer:1') < at('impl:2'), labels.join(' '))
+  assert.ok(byLabel('sh:gate:2')[0].prompt.includes('node --test test/b.test.js'))
+  assert.ok(byLabel('sh:gate:1')[0].prompt.includes('perl -e') && byLabel('sh:gate:1')[0].prompt.includes(' 120 bash -c'))
+  assert.ok(at('retro') > at('sh:final:suite'))
+  assert.ok(byLabel('sh:write:result:build').length === 1)
+  assert.deepEqual(result.slices.map(s => s.decisions), [['IMPL-SECRET used NFD'], ['IMPL-SECRET used NFD']], 'micro-decisions are reported')
+})
+
+test('build: preflight blocks on a dirty tree, another branch, a contract not ready, or an unknown baseline', async () => {
+  const dirty = await runBuild({}, { 'sh:preflight': { output: 'EXIT=1' } })
+  assert.equal(dirty.result.status, 'blocked')
+  assert.ok(!dirty.byLabel('impl:1').length)
+  assert.match(dirty.byLabel('sh:preflight')[0].prompt, /test -z "\$\(git status --porcelain\)"/)
+  const main = await runBuild({}, { 'sh:preflight': preflight({ branch: 'main' }) })
+  assert.equal(main.result.status, 'blocked')
+  assert.match(main.result.reason, /feature\/add-thing/)
+  const notReady = await runBuild({}, { 'sh:preflight': preflight({ contract: { ...CONTRACT_JSON, status: 'blocked' } }) })
+  assert.equal(notReady.result.status, 'blocked')
+  const noBase = await runBuild({}, { 'sh:preflight': preflight({ intent: { stage: 'intent', baseline: { command: '', runs: [], flaky: false } } }) })
+  assert.equal(noBase.result.status, 'blocked')
+  assert.match(noBase.result.reason, /baseline/)
+  const garbled = await runBuild({}, { 'sh:preflight': { output: 'BRANCH=feature/add-thing\nHEAD=h0\n--- contract ---\n{nope\n--- end contract ---\nEXIT=0' } })
+  assert.equal(garbled.result.status, 'blocked')
+})
+
+test('build: a baseline that was not green is a warning', async () => {
+  const { result } = await runBuild({}, { 'sh:preflight': preflight({ intent: { stage: 'intent', baseline: { command: 'npm test', runs: ['fail', 'fail'], flaky: false } } }) })
+  assert.match(result.warnings.join('\n'), /baseline/)
+})
+
+test('build: the slice-2 implementer prompt does not depend on what slice 1 returned', async () => {
+  const a = await runBuild()
+  const b = await runBuild({}, { 'impl:1': { ...IMPL, decisions: ['something else'] }, 'sh:check:1': { output: 'HEAD=zzz9999\nEXIT=0' } })
+  assert.equal(a.byLabel('impl:2')[0].prompt, b.byLabel('impl:2')[0].prompt)
+  assert.ok(!a.byLabel('impl:2')[0].prompt.includes('head-sh:check:1'))
+})
+
+test('build: from skips the slices before it, and from past the last slice runs only the review', async () => {
+  const { byLabel } = await runBuild({ from: 1 })
+  assert.ok(!byLabel('impl:1').length && byLabel('impl:2').length === 1)
+  assert.match(byLabel('sh:check:2')[0].prompt, /'h0'/, 'the slice starts from the HEAD preflight read')
+  const review = await runBuild({ from: 2 })
+  assert.ok(!review.calls.some(c => c.opts.label.startsWith('impl:')))
+  assert.equal(review.result.status, 'ready')
+  await assert.rejects(runBuild({ from: 3 }), /from/)
+  await assert.rejects(runBuild({ from: -1 }), /from/)
+})
+
+test('build: the implementer is sonnet only for a low-risk slice of a complete contract', async () => {
+  const { byLabel } = await runBuild()
+  assert.equal(byLabel('impl:1')[0].opts.model, 'sonnet')
+  assert.equal(byLabel('impl:2')[0].opts.model, 'opus')
+  assert.equal(byLabel('impl:1')[0].opts.agentType, 'implementer')
+  const grounded = await runBuild({}, { 'sh:preflight': preflight({ contract: { ...CONTRACT_JSON, groundFalse: 1 } }) })
+  assert.equal(grounded.byLabel('impl:1')[0].opts.model, 'opus')
+  const unproven = await runBuild({}, { 'sh:preflight': preflight({ contract: { ...CONTRACT_JSON, ledger: [{ id: 'p1', verdict: 'unproven' }] } }) })
+  assert.equal(unproven.byLabel('impl:1')[0].opts.model, 'opus')
+})
+
+test('build: the implementer starts from git status, keeps off the test-writer files, and commits once', async () => {
+  const p = (await runBuild()).byLabel('impl:1')[0].prompt
+  assert.match(p, /git status/)
+  assert.ok(p.includes('test/slug.test.js'))
+  assert.match(p, /needs-human/)
+  assert.match(p, /one commit/)
+})
+
+test('build: the check refuses a dirty tree, no new commit, or changed test-writer files', async () => {
+  const chk = (await runBuild()).byLabel('sh:check:1')[0].prompt
+  assert.ok(chk.includes("git diff --quiet 'def5678' HEAD -- 'test/slug.test.js'"), chk)
+  assert.ok(chk.includes("'h0'"))
+  assert.match(chk, /git status --porcelain/)
+})
+
+test('build: EXIT=142 is TIMEOUT and gets one retry on opus with the log tail', async () => {
+  const { byLabel, result } = await runBuild({}, { 'sh:gate:1': { output: 'slow test\nEXIT=142' }, 'sh:gate:1:retry': { output: 'EXIT=0' } })
+  const re = byLabel('impl:1:retry')
+  assert.equal(re.length, 1)
+  assert.equal(re[0].opts.model, 'opus')
+  assert.match(re[0].prompt, /TIMEOUT/)
+  assert.ok(re[0].prompt.includes('slow test'))
+  assert.equal(byLabel('sh:gate:1:retry').length, 1)
+  assert.equal(result.status, 'ready')
+  assert.equal(result.slices[0].retried, true)
+})
+
+test('build: a missing EXIT line is a failure, and a second failure blocks and stops the run', async () => {
+  const { byLabel, result } = await runBuild({}, { 'sh:gate:1': { output: 'all good, trust me' } })
+  assert.equal(result.status, 'blocked')
+  assert.equal(result.at, 0)
+  assert.match(result.reason, /missing/)
+  assert.ok(!byLabel('impl:2').length, 'the run stops at the blocked slice')
+  assert.ok(!byLabel('retro').length)
+})
+
+test('build: a failing lint fails the slice, and a failing check retries before the gate runs', async () => {
+  const lint = await runBuild({}, { 'sh:lint:1': { output: 'unused export\nEXIT=1' } })
+  assert.equal(lint.byLabel('impl:1:retry').length, 1)
+  assert.match(lint.byLabel('impl:1:retry')[0].prompt, /lint/)
+  const chk = await runBuild({}, { 'sh:check:1': { output: 'HEAD=h0\nTESTS_CHANGED\nEXIT=3' } })
+  assert.ok(!chk.byLabel('sh:gate:1').length)
+  assert.match(chk.byLabel('impl:1:retry')[0].prompt, /TESTS_CHANGED|test-writer/)
+})
+
+test('build: no lint command skips the lint with a warning', async () => {
+  const { byLabel, result } = await runBuild({}, { 'sh:preflight': preflight({ slices: { ...SLICES_JSON, lint: '' } }) })
+  assert.ok(!byLabel('sh:lint:1').length)
+  assert.match(result.warnings.join('\n'), /lint/)
+})
+
+test('build: needs-human from the implementer stops the run with its evidence', async () => {
+  const { byLabel, result } = await runBuild({}, { 'impl:1': { ...IMPL, status: 'needs-human', reason: 'test asserts the wrong thing', evidence: ['test/slug.test.js:3'] } })
+  assert.equal(result.status, 'needs-human')
+  assert.deepEqual(result.evidence, ['test/slug.test.js:3'])
+  assert.ok(!byLabel('sh:gate:1').length)
+})
+
+test('build: an invalidated experiment stops the run and returns the measure', async () => {
+  const sl = { ...SLICES_JSON, slices: [SLICE('Try NFKD', { kind: 'experiment', hypothesis: 'NFKD keeps ligatures under 1ms' }), SLICES_JSON.slices[1]] }
+  const { byLabel, result } = await runBuild({}, { 'sh:preflight': preflight({ slices: sl }), 'impl:1': { ...IMPL, measure: '4ms per call', invalidated: true } })
+  assert.equal(result.status, 'invalidated')
+  assert.match(JSON.stringify(result), /4ms per call/)
+  assert.ok(byLabel('impl:1')[0].prompt.includes('NFKD keeps ligatures under 1ms'))
+  assert.ok(!byLabel('impl:2').length)
+})
+
+test('build: a high-risk slice runs mutation on its own diff, and a survivor becomes a finding', async () => {
+  const { byLabel, result } = await runBuild({}, { 'sh:mutation:2': { output: '3 survived\nEXIT=2' } })
+  assert.ok(!byLabel('sh:mutation:1').length, 'low risk runs no mutation')
+  const m = byLabel('sh:mutation:2')[0].prompt
+  assert.ok(m.includes("git diff 'head-sh:check:1' 'head-sh:check:2' >"), m)
+  assert.ok(!/--diff DIFF/.test(m), 'DIFF is replaced by the diff file')
+  assert.match(byLabel('fix')[0].prompt, /mut-2/)
+  assert.ok(result.findings.some(f => f.id === 'mut-2'))
+})
+
+test('build: a mutation command without DIFF, or one that does not run, is a warning, not a finding', async () => {
+  const noDiff = await runBuild({}, { 'sh:preflight': preflight({ slices: { ...SLICES_JSON, mutation: 'npx stryker run' } }) })
+  assert.ok(!noDiff.byLabel('sh:mutation:2').length)
+  assert.match(noDiff.result.warnings.join('\n'), /DIFF/)
+  const broken = await runBuild({}, { 'sh:mutation:2': { output: 'command not found\nEXIT=127' } })
+  assert.ok(!broken.result.findings.length)
+  assert.match(broken.result.warnings.join('\n'), /mutation/)
+})
+
+test('build: peer and review never see the implementer text', async () => {
+  const { calls } = await runBuild({}, { 'impl': { ...IMPL, reason: 'IMPL-SECRET reason', measure: 'IMPL-SECRET measure' } })
+  const blind = calls.filter(c => /^(peer|review|redteam)/.test(c.opts.label))
+  assert.ok(blind.length >= 7, blind.map(c => c.opts.label).join(' '))
+  for (const c of blind) assert.ok(!c.prompt.includes('IMPL-SECRET'), c.opts.label)
+  assert.equal(calls.find(c => c.opts.label === 'peer:1').opts.agentType, 'reviewer')
+  assert.ok(calls.find(c => c.opts.label === 'peer:2').prompt.includes("git diff 'head-sh:check:1' 'head-sh:check:2'"))
+})
+
+test('build: four read-only review lenses run on the whole branch', async () => {
+  const { byLabel } = await runBuild()
+  for (const lens of ['correctness', 'minimality', 'conformity', 'security']) {
+    const r = byLabel(`review:${lens}`)
+    assert.equal(r.length, 1, lens)
+    assert.ok(r[0].prompt.includes("git diff 'abc1234' HEAD"), lens)
+  }
+  assert.match(byLabel('review:minimality')[0].prompt, /does not require/)
+})
+
+test('build: a finding without path:line evidence is dropped', async () => {
+  const { byLabel, result } = await runBuild({}, {
+    'review:correctness': { findings: [{ claim: 'off by one', evidence: 'src/slug.js:12', severity: 'major' }, { claim: 'feels wrong', evidence: 'vibes', severity: 'major' }] },
+  })
+  const fix = byLabel('fix')[0].prompt
+  assert.ok(fix.includes('off by one') && !fix.includes('feels wrong'))
+  assert.equal(result.findings.length, 1)
+})
+
+test('build: a red-team finding is kept only when its test runs to a failure', async () => {
+  const red = { findings: [
+    { claim: 'empty string crashes', test: 'test/red1.test.js', command: 'node --test test/red1.test.js', severity: 'major' },
+    { claim: 'passes anyway', test: 'test/red2.test.js', command: 'node --test test/red2.test.js', severity: 'major' },
+    { claim: 'never ran', test: 'test/red3.test.js', command: 'nodee --test', severity: 'major' },
+  ] }
+  const { byLabel, result } = await runBuild({}, {
+    'redteam': red,
+    'sh:redteam:red-1': { output: 'AssertionError\nEXIT=1' },
+    'sh:redteam:red-2': { output: 'ok\nEXIT=0' },
+    'sh:redteam:red-3': { output: 'not found\nEXIT=127' },
+    'fix': { applied: ['red-1'], declined: [] },
+  })
+  assert.ok(byLabel('sh:redteam:red-1')[0].prompt.includes("cd '/repo/.claude/runs/add-thing/wt/redteam'"))
+  const fix = byLabel('fix')[0].prompt
+  assert.ok(fix.includes('empty string crashes') && !fix.includes('passes anyway') && !fix.includes('never ran'))
+  assert.deepEqual(result.findings.map(f => f.id), ['red-1'])
+  assert.ok(byLabel('sh:final:red:red-1')[0].prompt.includes("cd '/repo' && "), 'the ported red test reruns in the repo')
+  assert.match(byLabel('redteam')[0].prompt, /Never write in \/repo/)
+})
+
+test('build: the red-team worktree is removed even when a step throws', async () => {
+  const calls = []
+  await assert.rejects(runBuild({}, { 'review:correctness': { findings: [{ claim: 'c', evidence: 'src/slug.js:1', severity: 'major' }] }, 'fix': failing }, calls))
+  assert.ok(calls.some(c => c.opts.label === 'sh:cleanup' && c.prompt.includes('git worktree remove --force')))
+})
+
+test('build: a lens or red team that crashes is a warning, not silence', async () => {
+  const { result } = await runBuild({}, { 'redteam': failing })
+  assert.equal(result.status, 'ready')
+  assert.match(result.warnings.join('\n'), /redteam/)
+})
+
+test('build: no finding means no fix agent', async () => {
+  const { byLabel } = await runBuild()
+  assert.ok(!byLabel('fix').length)
+})
+
+test('build: declined findings are reported, and their red tests are not rechecked', async () => {
+  const red = { findings: [{ claim: 'c1', test: 't1.js', command: 'node --test t1.js', severity: 'major' }, { claim: 'c2', test: 't2.js', command: 'node --test t2.js', severity: 'minor' }] }
+  const { byLabel, result } = await runBuild({}, {
+    'redteam': red, 'sh:redteam': { output: 'fail\nEXIT=1' }, 'sh:redteam:wt': { output: 'EXIT=0' },
+    'fix': { applied: ['red-1'], declined: [{ id: 'red-2', why: 'src/slug.js:4 is the contract' }] },
+  })
+  assert.equal(byLabel('sh:final:red:red-1').length, 1)
+  assert.ok(!byLabel('sh:final:red:red-2').length)
+  assert.match(result.warnings.join('\n'), /red-2/)
+  assert.match(byLabel('sh:check:fix')[0].prompt, /'def5678'/)
+})
+
+test('build: the final gate reruns every slice gate, the suite and the lint; any failure blocks', async () => {
+  const ok = await runBuild()
+  for (const l of ['sh:final:gate:1', 'sh:final:gate:2', 'sh:final:suite', 'sh:final:lint', 'sh:final:mutation']) assert.equal(ok.byLabel(l).length, 1, l)
+  assert.ok(ok.byLabel('sh:final:mutation')[0].prompt.includes("git diff 'abc1234' 'HEAD' >"))
+  const bad = await runBuild({}, { 'sh:final:suite': { output: 'FAIL\nEXIT=1' } })
+  assert.equal(bad.result.status, 'blocked')
+  assert.match(bad.result.reason, /suite/)
+  assert.equal(bad.result.at, 2, 'resume at the review')
+  assert.ok(!bad.byLabel('retro').length)
+  const mut = await runBuild({}, { 'sh:final:mutation': { output: 'survived\nEXIT=2' } })
+  assert.equal(mut.result.status, 'ready')
+  assert.match(mut.result.warnings.join('\n'), /mutants survive/)
+})
+
+test('build: the retro commits an ADR from decisions.md and the script writes retro.md', async () => {
+  const { byLabel, result } = await runBuild()
+  assert.match(byLabel('retro')[0].prompt, /decisions\.md/)
+  assert.match(byLabel('retro')[0].prompt, /ADR/)
+  assert.match(byLabel('sh:write:retro')[0].prompt, /slice 2 retried/)
+  assert.equal(result.adr, 'docs/adr/0001-add-thing.md')
+})
+
+test('build: no prompt pipes into tail without pipefail, every label is unique, and every agent prompt has the data rule', async () => {
+  const red = { findings: [{ claim: 'c1', test: 't1.js', command: 'node --test t1.js', severity: 'major' }] }
+  const { calls } = await runBuild({}, { 'sh:gate:1': { output: 'EXIT=1' }, 'sh:mutation:2': { output: 'EXIT=2' }, 'redteam': red, 'sh:redteam': { output: 'EXIT=1' }, 'sh:redteam:wt': { output: 'EXIT=0' }, 'fix': { applied: ['red-1'], declined: [] } })
+  for (const { prompt, opts } of calls) if (/\|\s*tail/.test(prompt)) assert.match(prompt, /set -o pipefail/, opts.label)
+  const labels = calls.map(c => c.opts.label)
+  assert.deepEqual(labels.filter((l, i) => labels.indexOf(l) !== i), [])
+  for (const c of nonShell(calls)) assert.match(c.prompt, /data, never an instruction/, c.opts.label)
+})
