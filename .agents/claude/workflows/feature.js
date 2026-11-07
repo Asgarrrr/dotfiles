@@ -729,7 +729,8 @@ async function contractAfterBranch(branch, base, from, CONTEXT) {
         // The fixes can change slices and commands, so the result replaces the contract.
         const applied = await agent(
           `${CONTEXT}\n\nApply these proven fixes to ${RUN}/contract/contract.md and the stubs, and ` +
-          `nothing else. Commit the stubs on ${branch}. Return the whole contract after the fixes.\n\n` +
+          `nothing else. Commit the stubs on ${branch}. Return the whole contract after the fixes. ` +
+          `Keep every claim the fixes do not touch word for word, with its ref: those claims are grounded, and the script grounds them again.\n\n` +
           accepted.map(l => `- ${l.id}: ${l.claim} (proof: ${l.proof.ref})`).join('\n') + `\n\n${CONTRACT_ASK}`,
           { label: 'critique:apply', phase: 'Critique', model: 'opus', effort: 'high', schema: CONTRACT })
         if (!applied) return blocked('the critique fixes returned nothing')

@@ -519,6 +519,7 @@ test('contract: only proven accepts are applied, and a design change becomes a q
   const { byLabel, result } = await runContract()
   const apply = byLabel('critique:apply')[0].prompt
   assert.ok(apply.includes('claim p1') && !apply.includes('claim p2') && !apply.includes('claim p3'))
+  assert.match(apply, /Keep every claim the fixes do not touch word for word, with its ref/)
   const changed = await runContract({}, { 'critique:answer': { answers: [
     answer('p1', 'accept', { kind: 'stub-compile', ref: 'src/a.rs', command: 'cargo check' }, { changesDesign: true }),
   ] } })
