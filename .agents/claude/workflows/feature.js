@@ -893,6 +893,12 @@ async function buildStage() {
       runTimed(plan.mutation.replaceAll('DIFF', shq(diff)), MAX_BUDGET_SEC, `${RUN}/build/${name.replace(/:/g, '-')}.log`), 'Build')
     const st = parseExit(out)
     if (st.status === 'pass') return { status: 'pass', out }
+    // A slice's suite still holds the red tests of later slices: cargo-mutants then
+    // exits 4 without testing a mutant, which is no survivor.
+    if (/failed in an unmutated tree/.test(out)) {
+      warn(`${name}: the unmutated baseline fails, so no mutant ran — ${RUN}/build/${name.replace(/:/g, '-')}.log`)
+      return { status: 'baseline-fails', out }
+    }
     if (ranToFailure(st)) return { status: 'survivors', out }
     warn(`${name}: mutation did not run (${st.status}${st.code ? ` ${st.code}` : ''})`)
     return { status: st.status, out }

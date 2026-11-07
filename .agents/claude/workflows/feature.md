@@ -109,13 +109,15 @@ big-feature run in `executed`, `blocked` or `paused` mode.
 - The auto-mode safety check can refuse a `bash -c` script by mistake. The
   step then fails, and only a changed command text gets past the cache.
 - `build.json` grows with each resume, because it carries the earlier findings.
+  The preflight relays it through `sh()`, so a long series of resumes can reach
+  the 30 KB relay limit.
 - A slice gate that filters tests by name passes with zero tests run when a
   `mod` line is removed: the script does not protect `mod` lines.
-- A slice's mutation runs the full suite. The tests of later slices still fail
-  there, so cargo-mutants can report survivors that no slice test misses. The
-  fix pass must then decline a false `mut-n` finding.
+- A slice's mutation runs the full suite, which still holds the red tests of
+  later slices. The unmutated baseline then fails, so no mutant runs: the script
+  warns, and that slice's test strength goes unmeasured.
 - The contract can plan a slice with no bricks, such as a final gate. Its
   implementer has nothing to build, and the slice ends in an empty commit.
-- A resumed run writes a new journal that counts only its own agents: cached
-  agents add no tokens or minutes. `metrics.py` undercounts the cost of a
-  resumed stage, and an earlier leg's journal can be missing.
+- A resume writes a new journal, and its cached agents add no tokens or
+  minutes. `metrics.py` sums every journal of a run, so the cost is complete
+  only while the journal of every earlier run of the stage is still on disk.

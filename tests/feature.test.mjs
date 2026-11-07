@@ -1024,6 +1024,16 @@ test('build: a mutation command without DIFF, or one that does not run, is a war
   assert.match(broken.result.warnings.join('\n'), /mutation/)
 })
 
+test('build: a mutation run whose unmutated baseline fails is a warning, not a survivor', async () => {
+  const baseline = 'ERROR cargo test failed in an unmutated tree, so no mutants were tested\nEXIT=4'
+  const { result } = await runBuild({}, { 'sh:mutation:2': { output: baseline }, 'sh:final:mutation': { output: baseline } })
+  assert.ok(!result.findings.some(f => f.source === 'mutation'))
+  assert.equal(result.slices[1].mutation, 'baseline-fails')
+  assert.equal(result.final.mutation, 'baseline-fails')
+  assert.match(result.warnings.join('\n'), /mutation:2: the unmutated baseline fails/)
+  assert.ok(!result.warnings.some(w => w.includes('mutants survive')))
+})
+
 test('build: peer and review never see the implementer text', async () => {
   const { calls } = await runBuild({}, { 'impl': { ...IMPL, reason: 'IMPL-SECRET reason', measure: 'IMPL-SECRET measure' } })
   const blind = calls.filter(c => /^(peer|review|redteam)/.test(c.opts.label))
