@@ -868,6 +868,7 @@ test('build: a resume after the fix does not send the applied findings again', a
   const { byLabel, result } = await runBuild({ from: 2 }, { 'sh:preflight': preflight({ build: done }), fix: { applied: ['mut-2'], declined: [] } })
   const fix = byLabel('fix')[0].prompt
   assert.ok(fix.includes('mut-2') && !fix.includes('peer-1-1'), fix)
+  assert.match(fix, /A red-team finding counts as applied only when its test stays committed at that path; if it cannot stay, decline it/)
   assert.deepEqual(result.findings.map(f => f.outcome), ['applied', 'applied'])
   const settled = await runBuild({ from: 2 }, { 'sh:preflight': preflight({ build: { ...done, findings: [done.findings[0]] } }) })
   assert.equal(settled.byLabel('fix').length, 0, 'nothing pending: no fix agent')
