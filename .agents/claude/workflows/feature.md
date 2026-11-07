@@ -111,3 +111,11 @@ big-feature run in `executed`, `blocked` or `paused` mode.
 - `build.json` grows with each resume, because it carries the earlier findings.
 - A slice gate that filters tests by name passes with zero tests run when a
   `mod` line is removed: the script does not protect `mod` lines.
+- A slice's mutation runs the full suite. The tests of later slices still fail
+  there, so cargo-mutants can report survivors that no slice test misses. The
+  fix pass must then decline a false `mut-n` finding.
+- The contract can plan a slice with no bricks, such as a final gate. Its
+  implementer has nothing to build, and the slice ends in an empty commit.
+- A resumed run writes a new journal that counts only its own agents: cached
+  agents add no tokens or minutes. `metrics.py` undercounts the cost of a
+  resumed stage, and an earlier leg's journal can be missing.
