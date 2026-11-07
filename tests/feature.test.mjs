@@ -544,6 +544,10 @@ test('contract: the test-writer works from the contract alone, apart from the im
   assert.ok(!t.prompt.includes('decisions.md') && !t.prompt.includes('/designs/') && !t.prompt.includes('Run dir'))
   assert.ok(t.prompt.includes('Read no other file under /repo/.claude/runs/add-thing.'))
   assert.notEqual(t.opts.agentType, 'implementer')
+  // The preflight relays every stage file in one Bash call, under the tool's output limit.
+  const input = byLabel('sh:write:build-input')[0].prompt
+  assert.ok(input.includes('/repo/.claude/runs/add-thing/contract/build-input.json'))
+  assert.ok(input.includes('"tests"') && !input.includes('"premortem"') && !input.includes('"digest"'))
   // The build forbids edits to every listed file: a production file that only registers a test module must stay editable.
   assert.match(t.prompt, /files that hold tests only/)
   assert.ok(byLabel('sh:tests:red')[0].prompt.includes(`bash -c 'set -o pipefail; npm test'`))
@@ -821,6 +825,7 @@ test('build: preflight blocks on a dirty tree, another branch, a contract not re
   assert.equal(dirty.result.status, 'blocked')
   assert.ok(!dirty.byLabel('impl:1').length)
   assert.match(dirty.byLabel('sh:preflight')[0].prompt, /test -z "\$\(git status --porcelain\)"/)
+  assert.ok(dirty.byLabel('sh:preflight')[0].prompt.includes('/contract/build-input.json') && !dirty.byLabel('sh:preflight')[0].prompt.includes('/contract.json'), 'the build reads the small contract input')
   const main = await runBuild({}, { 'sh:preflight': preflight({ branch: 'main' }) })
   assert.equal(main.result.status, 'blocked')
   assert.match(main.result.reason, /feature\/add-thing/)

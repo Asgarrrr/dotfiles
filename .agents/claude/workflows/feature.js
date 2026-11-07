@@ -99,6 +99,14 @@ const finish = async (result, phaseName) => {
     if (!q.options.some(o => o.label === q.recommendation.option)) warn(`question ${q.id}: the recommendation names no option`)
   }
   await writeFile(`result:${result.stage}`, `${RUN}/${result.stage}.json`, JSON.stringify(full, null, 2), phaseName)
+  // The build preflight relays its inputs in one Bash call, and the premortem and the
+  // ledger notes alone take most of the tool's 30 KB output limit.
+  if (result.stage === 'contract') {
+    const { status, branch, base, groundFalse, ledger, tests } = result
+    await writeFile('build-input', `${RUN}/contract/build-input.json`, JSON.stringify({
+      stage: 'contract', status, branch, base, groundFalse, ledger: (ledger || []).map(({ id, verdict }) => ({ id, verdict })), tests,
+    }), phaseName)
+  }
   return full
 }
 
@@ -818,7 +826,7 @@ async function buildStage() {
   // The script has no filesystem: the stage inputs come back through one cat.
   const pre = await sh('preflight',
     `cd ${shq(dir)} && test -z "$(git status --porcelain)" && echo "BRANCH=$(git branch --show-current)" && echo "HEAD=$(git rev-parse HEAD)" && echo "PREFIX=$(git rev-parse --show-prefix)" && ` +
-    [['contract', `${RUN}/contract.json`], ['slices', `${RUN}/contract/slices.json`], ['intent', `${RUN}/intent.json`]]
+    [['contract', `${RUN}/contract/build-input.json`], ['slices', `${RUN}/contract/slices.json`], ['intent', `${RUN}/intent.json`]]
       .map(([k, f]) => `echo '--- ${k} ---' && cat ${shq(f)} && echo && echo '--- end ${k} ---'`).join(' && ') +
     // The last build result, if any: a resume carries its slices and slice findings.
     ` && { ! test -f ${shq(`${RUN}/build.json`)} || { echo '--- build ---' && cat ${shq(`${RUN}/build.json`)} && echo && echo '--- end build ---'; }; }\necho "EXIT=$?"`, 'Build')
