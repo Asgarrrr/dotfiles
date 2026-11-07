@@ -764,3 +764,9 @@ test('contract: GPT point ids that are unsafe or repeated are renumbered', async
   assert.ok(ask.includes('- p1 [major] claim ../../x') && ask.includes('- p3 [major] claim p2'))
   assert.ok(!byLabel('sh:proof:../../x').length)
 })
+
+test('contract: an absolute test path under the repo is checked relative to it', async () => {
+  const { byLabel, result } = await runContract({}, { tests: { files: ['/repo/test/slug.test.js'], testCommand: 'npm test', commit: 'def5678' } })
+  assert.ok(byLabel('sh:tests:red')[0].prompt.includes("git cat-file -e 'HEAD:test/slug.test.js'"))
+  assert.deepEqual(result.tests.files, ['test/slug.test.js'])
+})

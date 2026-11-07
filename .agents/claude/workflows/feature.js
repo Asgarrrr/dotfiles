@@ -747,7 +747,7 @@ async function contractAfterBranch(branch, base, from, CONTEXT) {
   }, null, 2), 'Tests')
   const TESTS = {
     type: 'object',
-    properties: { files: { type: 'array', items: { type: 'string' } }, testCommand: { type: 'string', description: 'runs exactly the new tests, from the repo dir' }, commit: { type: 'string' } },
+    properties: { files: { type: 'array', items: { type: 'string' }, description: 'paths relative to the repo' }, testCommand: { type: 'string', description: 'runs exactly the new tests, from the repo dir' }, commit: { type: 'string' } },
     required: ['files', 'testCommand', 'commit'],
   }
   // The test-writer sees the contract, not the designs or the reasons behind them,
@@ -760,6 +760,8 @@ async function contractAfterBranch(branch, base, from, CONTEXT) {
     `contract is met. Commit the tests, and return the files and the commit hash.`,
     { label: 'tests', phase: 'Tests', model: 'opus', effort: 'high', schema: TESTS })
   if (!t || !t.files.length) return blocked('the test-writer returned no test file')
+  // git reads HEAD:<path> relative to the repo; agents often return absolute paths.
+  t.files = t.files.map(f => f.startsWith(`${dir}/`) ? f.slice(dir.length + 1) : f)
   // The files and the commit come from the agent: the red run counts only if both are on the branch.
   const red = await sh('tests:red',
     // Committed at HEAD, clean in the tree, changed since the base, and HEAD is the commit returned.
