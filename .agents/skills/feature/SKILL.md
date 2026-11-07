@@ -28,7 +28,9 @@ question for the user. The run dir holds the state; the digest is all you need.
 ## Read the result
 
 Every stage returns `status`, `warnings`, `digest`, `questions`, and `next`, and
-writes the same object to `<runDir>/<stage>.json`.
+writes the same object to `<runDir>/<stage>.json`. One exception: a `build` that
+blocks before its first slice writes nothing, because `build.json` is the record
+a resume reads.
 
 - `needs-human`: the stage judged the task ill-posed. Show `reason` and `evidence`
   verbatim, and stop. The user reformulates; a new task is a new slug.
@@ -114,7 +116,8 @@ then reviews, fixes, and gates the whole branch.
 A `build` that ends `blocked` or `needs-human` returns `at`, the index of the slice
 where it stopped. The user fixes the cause on the branch. Then launch `build` again
 with `from: <at>`; the slices before it stay as committed. An `at` equal to the slice
-count resumes at the review.
+count resumes at the review. A resume reads the slice heads from `build.json`; if
+the reason says to rerun with `from: 0`, do that.
 
 After a `ready` build, show the digest, `findings` with each outcome, `adr`, and
 `next`. Point the user to `<runDir>/retro.md`: it proposes rules, and the user
