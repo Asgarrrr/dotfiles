@@ -452,12 +452,23 @@ async function contractStage() {
   // stage never writes on the user's branch.
   const br = await sh('branch',
     `cd ${shq(dir)} && test -f ${shq(`${RUN}/decisions.md`)} && test -z "$(git status --porcelain)" && ` +
-    `echo "BASE=$(git rev-parse --short HEAD)" && git switch -c ${shq(branch)}\necho "EXIT=$?"`, 'Contract')
+    `echo "BASE=$(git rev-parse --short HEAD)" && echo "FROM=$(git branch --show-current)" && git switch -c ${shq(branch)}\necho "EXIT=$?"`, 'Contract')
   const base = ((br.match(/^BASE=(\w+)$/m) || [])[1] || '')
+  // The branch to switch back to when the run stops; empty on a detached HEAD.
+  const from = ((br.match(/^FROM=(.*)$/m) || [])[1] || '').trim()
   if (parseExit(br).status !== 'pass' || !base) {
     return finish({ stage: 'contract', status: 'blocked', runDir: RUN, reason: `cannot start ${branch}: decisions.md missing, uncommitted changes in ${dir}, or the branch exists`, evidence: [br.slice(-400)], questions: [], digest: '', next: null }, 'Contract')
   }
+  try {
+    return await contractAfterBranch(branch, base, from, CONTEXT)
+  } catch (e) {
+    // The branch exists now: the skill needs a result to relay, not a crash.
+    const r = { stage: 'contract', status: 'blocked', runDir: RUN, branch, base, from, reason: `the stage failed after creating ${branch}: ${String((e && e.message) || e).slice(0, 300)}`, evidence: [], questions: [], digest: '', next: null }
+    try { return await finish(r, 'Contract') } catch (e2) { return { ...r, warnings: [...warnings, `${RUN}/contract.json not written — ${String(e2).slice(0, 200)}`] } }
+  }
+}
 
+async function contractAfterBranch(branch, base, from, CONTEXT) {
   phase('Premortem')
   const PREMORTEM = {
     type: 'object',
@@ -530,7 +541,7 @@ async function contractStage() {
     `or seam without a present need is a defect. Commit the stubs on the current branch ` +
     `(${branch}); the run dir is git-excluded, so contract.md stays out of the commit.`
   let c = null
-  const blocked = (reason, evidence = []) => finish({ stage: 'contract', status: 'blocked', runDir: RUN, branch, base, reason, evidence, questions: [], digest: (c && c.digest) || '', next: null }, 'Contract')
+  const blocked = (reason, evidence = []) => finish({ stage: 'contract', status: 'blocked', runDir: RUN, branch, base, from, reason, evidence, questions: [], digest: (c && c.digest) || '', next: null }, 'Contract')
   c = await agent(
     `${CONTEXT}\n\nRead ${RUN}/task.md, ${RUN}/decisions.md (it names the chosen design file), that ` +
     `design, ${RUN}/premortem.md, and ${RUN}/research.md if it exists: target the lockfile versions.\n\n${CONTRACT_ASK}`,
@@ -539,6 +550,8 @@ async function contractStage() {
 
   // Returns why the contract is unusable, or null.
   const checkContract = async (k, label) => {
+    // An empty command runs `bash -c 'set -o pipefail; '`, which exits 0 and compiles nothing.
+    if (!c.compileCommand.trim()) return { reason: 'the compile command is empty', evidence: [] }
     const names = new Set(c.bricks.map(b => b.name))
     for (const s of c.slices) {
       const unknown = s.bricks.filter(b => !names.has(b))
@@ -553,20 +566,21 @@ async function contractStage() {
   phase('Ground')
   const GROUND = {
     type: 'object',
-    properties: { checks: { type: 'array', items: { type: 'object', properties: { claim: { type: 'string' }, ref: { type: 'string' }, verdict: { type: 'string', enum: ['true', 'false'] }, excerpt: { type: 'string', description: 'the verbatim lines at ref' } }, required: ['claim', 'ref', 'verdict', 'excerpt'] } } },
+    properties: { checks: { type: 'array', items: { type: 'object', properties: { index: { type: 'integer', description: 'the claim number' }, claim: { type: 'string' }, ref: { type: 'string' }, verdict: { type: 'string', enum: ['true', 'false'] }, excerpt: { type: 'string', description: 'the verbatim lines at ref' } }, required: ['index', 'claim', 'ref', 'verdict', 'excerpt'] } } },
     required: ['checks'],
   }
   // Only the claims, never the author's reasoning: the checker reads the code, not the case for it.
   const ground = n => agent(
     `Repo: ${dir}. For each claim below, open the file at the ref and decide whether the claim ` +
     `is true of the code there. Copy the lines you read into excerpt. A claim you cannot locate is false. ` +
-    `${DATA_RULE}\n\n` +
-    c.bricks.flatMap(b => b.claims).map(x => `- ${x.claim} (${x.ref})`).join('\n'),
+    `Answer once per claim, with its number as index. ${DATA_RULE}\n\n` +
+    c.bricks.flatMap(b => b.claims).map((x, k) => `${k + 1}. ${x.claim} (${x.ref})`).join('\n'),
     { label: `ground:${n}`, phase: 'Ground', model: 'sonnet', effort: 'high', schema: GROUND })
-  // A claim with no true check at its ref is false: a missing check is no evidence.
-  const falseOf = g => c.bricks.flatMap(b => b.claims).flatMap(x => {
-    const at = ((g && g.checks) || []).filter(k => k.ref === x.ref)
-    return at.some(k => k.verdict === 'true') ? [] : [{ claim: x.claim, ref: x.ref, excerpt: (at[0] && at[0].excerpt) || '' }]
+  // Checks match claims by number, since two claims can share a ref. A claim with no
+  // check is false, and so is one with any false check: a missing check is no evidence.
+  const falseOf = g => c.bricks.flatMap(b => b.claims).flatMap((x, k) => {
+    const at = ((g && g.checks) || []).filter(ch => ch.index === k + 1)
+    return at.length && at.every(ch => ch.verdict === 'true') ? [] : [{ claim: x.claim, ref: x.ref, excerpt: (at.find(ch => ch.verdict !== 'true') || {}).excerpt || '' }]
   })
   const first = falseOf(await ground(1))
   const groundFalse = first.length
@@ -582,7 +596,7 @@ async function contractStage() {
     if (bad) return blocked(`revised contract: ${bad.reason}`, bad.evidence)
     const second = falseOf(await ground(2))
     if (second.length) {
-      return finish({ stage: 'contract', status: 'needs-human', runDir: RUN, branch, base, groundFalse, reason: 'the contract still relies on false claims after one revision', evidence: second.map(x => `${x.ref}: ${x.claim}`), questions: [], digest: c.digest, next: null }, 'Ground')
+      return finish({ stage: 'contract', status: 'needs-human', runDir: RUN, branch, base, from, groundFalse, reason: 'the contract still relies on false claims after one revision', evidence: second.map(x => `${x.ref}: ${x.claim}`), questions: [], digest: c.digest, next: null }, 'Ground')
     }
   }
 
@@ -618,6 +632,10 @@ async function contractStage() {
     } else {
       noCritique = 'codex failed'
       warn(`critique: codex failed (${parseExit(out).status}) — ${out.slice(-200)}`)
+    }
+    // The ids name log files and agent labels: GPT's own ids are kept only when safe and unique.
+    if (points && points.some((pt, k) => !/^[a-z0-9-]{1,20}$/i.test(String(pt.id)) || points.findIndex(o => o.id === pt.id) !== k)) {
+      points = points.map((pt, k) => ({ ...pt, id: `p${k + 1}` }))
     }
     if (points && points.length) {
       const ANSWERS = {
@@ -701,6 +719,9 @@ async function contractStage() {
         c = applied
         bad = await checkContract('Critique', 'applied')
         if (bad) return blocked(`after the critique fixes: ${bad.reason}`, bad.evidence)
+        // The fixes can add claims; the grounded set was the one before them.
+        const regrounded = falseOf(await ground(3))
+        if (regrounded.length) return blocked('after the critique fixes, the contract relies on false claims', regrounded.map(x => `${x.ref}: ${x.claim}`))
         // A proof that still fails after its fix tested the stubs, not the defect.
         for (const l of accepted.filter(l => l.rerun)) {
           const st = parseExit(await sh(`recheck:${l.id}`, `cd ${shq(dir)} && ${runTimed(l.proof.command, MAX_BUDGET_SEC, `${RUN}/contract/proof/${l.id}-after.log`)}`, 'Critique'))
@@ -741,20 +762,22 @@ async function contractStage() {
   if (!t || !t.files.length) return blocked('the test-writer returned no test file')
   // The files and the commit come from the agent: the red run counts only if both are on the branch.
   const red = await sh('tests:red',
-    `cd ${shq(dir)} && if git ls-files --error-unmatch -- ${t.files.map(shq).join(' ')} >/dev/null && ` +
+    // Committed at HEAD, clean in the tree, changed since the base, and HEAD is the commit returned.
+    `cd ${shq(dir)} && if ${t.files.map(f => `git cat-file -e ${shq(`HEAD:${f}`)}`).join(' && ')} && ` +
+    `git diff --quiet HEAD -- ${t.files.map(shq).join(' ')} && ! git diff --quiet ${shq(base)} HEAD -- ${t.files.map(shq).join(' ')} && ` +
     `test "$(git rev-parse HEAD)" = "$(git rev-parse --verify -q ${shq(`${t.commit}^{commit}`)})"; then ` +
-    `${runTimed(t.testCommand, MAX_BUDGET_SEC, `${RUN}/contract/tests-red.log`)}; else echo 'TESTS NOT COMMITTED AT HEAD'; echo "EXIT=125"; fi`, 'Tests')
+    `${runTimed(t.testCommand, MAX_BUDGET_SEC, `${RUN}/contract/tests-red.log`)}; else echo 'NOT_AT_HEAD'; echo "EXIT=125"; fi`, 'Tests')
   const redSt = parseExit(red)
   if (!ranToFailure(redSt)) {
     return blocked(redSt.status === 'pass' ? 'the new tests are green against the stubs: they test nothing the build adds'
-      : redSt.code === 125 ? 'the test files or the commit the test-writer returned are not at HEAD'
+      : /^NOT_AT_HEAD$/m.test(red) ? 'the test files are not committed at HEAD, or HEAD is not the commit the test-writer returned'
       : `the new tests did not run to a failure (${redSt.status}${redSt.code ? ` ${redSt.code}` : ''})`, [red.slice(-400)])
   }
 
   return finish({
     stage: 'contract',
     status: questions.length ? 'questions' : 'ready',
-    runDir: RUN, branch, base, groundFalse, bricks: c.bricks.map(b => b.name), slices, ledger, premortem: modes,
+    runDir: RUN, branch, base, from, groundFalse, bricks: c.bricks.map(b => b.name), slices, ledger, premortem: modes,
     tests: { files: t.files, command: t.testCommand, commit: t.commit },
     questions, digest: c.digest,
     next: `Record the answers in ${RUN}/decisions.md, then run stage build.`,

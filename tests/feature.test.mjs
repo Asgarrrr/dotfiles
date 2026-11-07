@@ -444,7 +444,7 @@ const CONTRACT_FIXTURES = {
     suiteCommand: 'npm test', lintCommand: 'npm run lint', mutationCommand: '',
     slices: [SLICE('Accents'), SLICE('Drop chars', { risk: 'high' })], digest: 'contract digest',
   },
-  'ground': { checks: [{ claim: 'slugify is exported', ref: 'src/slug.js:1', verdict: 'true', excerpt: 'export function slugify' }] },
+  'ground': { checks: [{ index: 1, claim: 'slugify is exported', ref: 'src/slug.js:1', verdict: 'true', excerpt: 'export function slugify' }] },
   'tests': { files: ['test/slug.test.js'], testCommand: 'npm test', commit: 'def5678' },
   'sh:tests:red': { output: '1 failing\nEXIT=1' },
   'sh:critique:gpt': { output: `--- answer ---\n${JSON.stringify({ points: [point('p1'), point('p2'), point('p3')] })}\n--- end answer ---\nEXIT=0` },
@@ -548,7 +548,7 @@ test('contract: the test-writer works from the contract alone, apart from the im
 })
 
 test('contract: a false claim gets one revision, then needs-human', async () => {
-  const bad = { checks: [{ claim: 'slugify is exported', ref: 'src/slug.js:1', verdict: 'false', excerpt: 'function slugify' }] }
+  const bad = { checks: [{ index: 1, claim: 'slugify is exported', ref: 'src/slug.js:1', verdict: 'false', excerpt: 'function slugify' }] }
   const once = await runContract({}, { 'ground:1': bad })
   assert.equal(once.byLabel('contract:revise').length, 1)
   assert.ok(once.byLabel('contract:revise')[0].prompt.includes('src/slug.js:1): function slugify'))
@@ -577,8 +577,10 @@ test('contract: stubs that do not compile block, and so does a slice naming an u
 
 test('contract: after the branch exists, an empty agent result blocks instead of throwing, and writes contract.json', async () => {
   for (const label of ['contract', 'critique:apply', 'tests']) {
-    const { result, byLabel } = await runContract({}, { [label]: null })
+    const { result, byLabel } = await runContract({}, { [label]: null, 'sh:branch': { output: 'BASE=abc1234\nFROM=main\nEXIT=0' } })
     assert.equal(result.status, 'blocked', label)
+    assert.equal(result.from, 'main', label)
+    assert.doesNotMatch(result.reason, /after creating/, `${label}: an empty result is handled, not caught`)
     assert.equal(byLabel('sh:write:result:contract').length, 1, label)
   }
   const revise = await runContract({}, { 'ground:1': { checks: [] }, 'contract:revise': null })
@@ -586,7 +588,7 @@ test('contract: after the branch exists, an empty agent result blocks instead of
 })
 
 test('contract: a claim the ground checker leaves out counts as false', async () => {
-  for (const g of [null, { checks: [] }, { checks: [{ claim: 'other', ref: 'src/other.js:3', verdict: 'true', excerpt: '' }] }]) {
+  for (const g of [null, { checks: [] }, { checks: [{ index: 2, claim: 'other', ref: 'src/slug.js:1', verdict: 'true', excerpt: '' }] }]) {
     const { byLabel, result } = await runContract({}, { 'ground:1': g })
     assert.equal(byLabel('contract:revise').length, 1, JSON.stringify(g))
     assert.equal(result.groundFalse, 1)
@@ -631,6 +633,9 @@ test('contract: slices.json comes from the contract after the critique fixes', a
 test('contract: a proof is rerun after its fix and must pass, or the run warns', async () => {
   const ok = await runContract()
   assert.equal(ok.byLabel('sh:recheck:p1').length, 1)
+  const at = l => ok.calls.findIndex(c => c.opts.label === l)
+  assert.ok(at('sh:recheck:p1') > at('critique:apply'), 'the recheck runs after the fix')
+  assert.ok(ok.byLabel('sh:recheck:p1')[0].prompt.includes(`bash -c 'set -o pipefail; node --test x'`))
   assert.equal(ok.byLabel('sh:recheck:p2').length, 0, 'a doc proof has nothing to rerun')
   assert.equal(ok.result.ledger.find(l => l.id === 'p1').afterFix, 'pass')
   const still = await runContract({}, { 'sh:recheck': { output: 'still red\nEXIT=1' } })
@@ -649,11 +654,15 @@ test('contract: a proof whose command never ran is no proof', async () => {
 test('contract: the red run checks that the test files and the commit are at HEAD', async () => {
   const { byLabel } = await runContract()
   const r = byLabel('sh:tests:red')[0].prompt
-  assert.ok(r.includes("git ls-files --error-unmatch -- 'test/slug.test.js'"))
   assert.ok(r.includes(`'def5678^{commit}'`))
-  const absent = await runContract({}, { 'sh:tests:red': { output: 'TESTS NOT COMMITTED AT HEAD\nEXIT=125' } })
+  assert.ok(r.includes("git cat-file -e 'HEAD:test/slug.test.js'"), 'staged is not committed')
+  assert.ok(r.includes("git diff --quiet HEAD -- 'test/slug.test.js'"))
+  assert.ok(r.includes("! git diff --quiet 'abc1234' HEAD -- 'test/slug.test.js'"), 'the files changed since the base')
+  const absent = await runContract({}, { 'sh:tests:red': { output: 'NOT_AT_HEAD\nEXIT=125' } })
   assert.equal(absent.result.status, 'blocked')
-  assert.match(absent.result.reason, /not at HEAD/)
+  assert.match(absent.result.reason, /not committed at HEAD/)
+  const own125 = await runContract({}, { 'sh:tests:red': { output: 'tool exits 125\nEXIT=125' } })
+  assert.doesNotMatch(own125.result.reason, /not committed/)
   const none = await runContract({}, { tests: { files: [], testCommand: 'npm test', commit: 'x' } })
   assert.equal(none.result.status, 'blocked')
 })
@@ -709,4 +718,49 @@ test('contract: a premortem that returns nothing is a warning, not a crash', asy
 test('contract: a blocked branch runs no premortem', async () => {
   const { byLabel } = await runContract({}, { 'sh:branch': { output: 'EXIT=1' } })
   assert.equal(byLabel('premortem').length, 0)
+})
+
+test('contract: two claims at one ref are checked apart', async () => {
+  const two = { ...CONTRACT_FIXTURES.contract, bricks: [{ name: 'slugify', file: 'src/slug.js', claims: [
+    { claim: 'slugify is exported', ref: 'src/slug.js:1' }, { claim: 'slugify trims input', ref: 'src/slug.js:1' }] }] }
+  const g = { checks: [
+    { index: 1, claim: 'slugify is exported', ref: 'src/slug.js:1', verdict: 'true', excerpt: 'export' },
+    { index: 2, claim: 'slugify trims input', ref: 'src/slug.js:1', verdict: 'false', excerpt: 'no trim' }] }
+  const { byLabel, result } = await runContract({}, { contract: two, 'ground:1': g })
+  assert.equal(result.groundFalse, 1)
+  assert.ok(byLabel('contract:revise')[0].prompt.includes('slugify trims input (src/slug.js:1): no trim'))
+  assert.ok(byLabel('ground:1')[0].prompt.includes('2. slugify trims input (src/slug.js:1)'))
+})
+
+test('contract: the claims are grounded again after the critique fixes', async () => {
+  const bad = { checks: [{ index: 1, claim: 'slugify is exported', ref: 'src/slug.js:1', verdict: 'false', excerpt: '' }] }
+  const { result } = await runContract({}, { 'ground:3': bad })
+  assert.equal(result.status, 'blocked')
+  assert.match(result.reason, /after the critique fixes, the contract relies on false claims/)
+})
+
+test('contract: an empty compile command blocks', async () => {
+  const { result } = await runContract({}, { contract: { ...CONTRACT_FIXTURES.contract, compileCommand: ' ' } })
+  assert.equal(result.status, 'blocked')
+  assert.match(result.reason, /compile command is empty/)
+})
+
+test('contract: a failure after the branch exists returns blocked with the branch to go back to', async () => {
+  const { result } = await runContract({}, { 'sh:branch': { output: 'BASE=abc1234\nFROM=main\nEXIT=0' }, 'sh:write:premortem': { output: 'disk full' } })
+  assert.equal(result.status, 'blocked')
+  assert.equal(result.from, 'main')
+  assert.match(result.reason, /after creating feature\/add-thing/)
+  const noWrite = await runContract({}, { 'sh:write': { output: 'disk full' } })
+  assert.equal(noWrite.result.status, 'blocked')
+  assert.match(noWrite.result.warnings.join('\n'), /contract.json not written/)
+})
+
+test('contract: GPT point ids that are unsafe or repeated are renumbered', async () => {
+  const unsafe = await runContract({}, { 'sh:critique:gpt': { output: `--- answer ---\n${JSON.stringify({ points: [point('../../x')] })}\n--- end answer ---\nEXIT=0` } })
+  assert.ok(unsafe.byLabel('critique:answer')[0].prompt.includes('- p1 [major] claim ../../x'))
+  const pts = [point('../../x'), point('p2'), point('p2')]
+  const { byLabel } = await runContract({}, { 'sh:critique:gpt': { output: `--- answer ---\n${JSON.stringify({ points: pts })}\n--- end answer ---\nEXIT=0` } })
+  const ask = byLabel('critique:answer')[0].prompt
+  assert.ok(ask.includes('- p1 [major] claim ../../x') && ask.includes('- p3 [major] claim p2'))
+  assert.ok(!byLabel('sh:proof:../../x').length)
 })

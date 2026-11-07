@@ -98,9 +98,11 @@ and one line per answer: `- <id>: <chosen label> — <notes>`. On `Keep contract
 write `declined` in the notes. On `Redesign`, stop: the user restarts at `intent`
 with a new slug and the point in the task.
 
-A `contract` run that stops after it creates `feature/<slug>` leaves that branch
-behind, and a rerun with the same slug is blocked. Tell the user. The user deletes
-the branch, or restarts with a new slug. Never delete it yourself.
+A `contract` run that stops after it creates `feature/<slug>` leaves the repo on
+that branch, and a rerun with the same slug is blocked. Tell the user, with the
+branch the run started from: `from` in the result (empty on a detached HEAD, then
+use `base`). Before a new slug or a rerun, the user runs `git switch <from>`, then
+deletes `feature/<slug>` or keeps it. Never switch or delete yourself.
 
 The build stage is not built yet. After `contract`, report the digest, the branch,
 and `<runDir>/contract/ledger.md`, then stop.
