@@ -102,3 +102,12 @@ big-feature run in `executed`, `blocked` or `paused` mode.
 - Gate budgets are clamped to 570 s: one Bash call has a 600 s cap.
 - The build does not enforce one commit per slice. A resume after a user fix
   adds commits, so the script reviews and mutates the range `start..head`.
+- The final gate runs the suite once. A flaky test blocks the build, and a
+  resume replays the cached failure: only a changed command text runs it again.
+- The `sh()` runner relays output through an agent. Above about 30 KB, the
+  relay can drop or alter text without an error, so keep stage inputs small.
+- The auto-mode safety check can refuse a `bash -c` script by mistake. The
+  step then fails, and only a changed command text gets past the cache.
+- `build.json` grows with each resume, because it carries the earlier findings.
+- A slice gate that filters tests by name passes with zero tests run when a
+  `mod` line is removed: the script does not protect `mod` lines.
