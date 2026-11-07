@@ -538,7 +538,9 @@ async function contractAfterBranch(branch, base, from, CONTEXT) {
   }
   const CONTRACT_ASK =
     `Write the contract for the chosen design: the public types and signatures as stubs in ` +
-    `the repo (bodies may be todo!()/throw), and ${RUN}/contract/contract.md with, per brick, ` +
+    `the repo (bodies may be todo!()/throw), with every field the build adds, private ones included: ` +
+    `the tests are written against the stubs and must compile against the final shapes. No slice edits a ` +
+    `test file; the build forbids it. Then write ${RUN}/contract/contract.md with, per brick, ` +
     `its file, its signatures copied from the stubs, its invariants, and the facts about the ` +
     `existing code it relies on as claims with path:line. Then cut the build into vertical ` +
     `slices: each touches data, behavior and test, names its bricks, and has a gate command ` +
