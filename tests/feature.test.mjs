@@ -780,8 +780,8 @@ const SLICES_JSON = {
   mutation: 'npx stryker run --diff DIFF', slices: [SLICE('Accents', { gate: { command: 'node --test test/a.test.js', budgetSec: 120 } }), SLICE('Drop chars', { risk: 'high', gate: { command: 'node --test test/b.test.js', budgetSec: 60 } })],
 }
 const INTENT_JSON = { stage: 'intent', baseline: { command: 'npm test', lint: '', runs: ['pass', 'pass'], flaky: false } }
-const files = ({ contract = CONTRACT_JSON, slices = SLICES_JSON, intent = INTENT_JSON } = {}) =>
-  [['contract', contract], ['slices', slices], ['intent', intent]].map(([k, v]) => `--- ${k} ---\n${JSON.stringify(v)}\n\n--- end ${k} ---`).join('\n')
+const files = ({ contract = CONTRACT_JSON, slices = SLICES_JSON, intent = INTENT_JSON, build } = {}) =>
+  [['contract', contract], ['slices', slices], ['intent', intent], ...(build ? [['build', build]] : [])].map(([k, v]) => `--- ${k} ---\n${JSON.stringify(v)}\n\n--- end ${k} ---`).join('\n')
 const preflight = (o = {}) => ({ output: `BRANCH=${o.branch || 'feature/add-thing'}\nHEAD=h0\nPREFIX=\n${files(o)}\nEXIT=0` })
 const IMPL = { status: 'done', reason: '', evidence: [], decisions: ['IMPL-SECRET used NFD'], measure: '', invalidated: false }
 const BUILD_FIXTURES = {
@@ -839,15 +839,79 @@ test('build: the slice-2 implementer prompt does not depend on what slice 1 retu
   assert.ok(!a.byLabel('impl:2')[0].prompt.includes('head-sh:check:1'))
 })
 
-test('build: from skips the slices before it, and from past the last slice runs only the review', async () => {
-  const { byLabel } = await runBuild({ from: 1 })
+const PREV = { stage: 'build', status: 'blocked', at: 1,
+  slices: [{ index: 0, title: 'Accents', head: 'slice1head', retried: true, decisions: ['kept NFD'] }],
+  findings: [{ id: 'peer-1-1', source: 'peer:1', slice: 0, claim: 'error lost', evidence: 'src/slug.js:9', severity: 'major' }, { id: 'correctness-1', source: 'review:correctness', claim: 'stale', evidence: 'src/slug.js:2', severity: 'minor' }] }
+const resume = (from, o = {}) => runBuild({ from }, { 'sh:preflight': preflight({ build: PREV }), fix: { applied: ['peer-1-1'], declined: [] }, ...o })
+
+test('build: slice 1 starts at the test-writer commit, not at the HEAD of the rerun', async () => {
+  const { byLabel } = await runBuild()
+  assert.match(byLabel('sh:check:1')[0].prompt, /"\$\(git rev-parse 'def5678'\)"/)
+  assert.match(byLabel('peer:1')[0].prompt, /git diff 'def5678' 'head-sh:check:1'/)
+})
+
+test('build: from resumes after the head the last build recorded, with its slices and slice findings', async () => {
+  const { byLabel, result } = await resume(1)
   assert.ok(!byLabel('impl:1').length && byLabel('impl:2').length === 1)
-  assert.match(byLabel('sh:check:2')[0].prompt, /'h0'/, 'the slice starts from the HEAD preflight read')
-  const review = await runBuild({ from: 2 })
+  assert.match(byLabel('sh:check:2')[0].prompt, /'slice1head'/)
+  assert.match(byLabel('peer:2')[0].prompt, /git diff 'slice1head' /)
+  assert.deepEqual(result.slices.map(s => s.title), ['Accents', 'Drop chars'])
+  const fix = byLabel('fix')[0].prompt
+  assert.ok(fix.includes('peer-1-1') && !fix.includes('stale'), 'slice findings carry over; review findings are redone')
+  assert.match(byLabel('retro')[0].prompt, /kept NFD/)
+})
+
+test('build: a resume after the fix does not send the applied findings again', async () => {
+  const done = { ...PREV, at: 2, slices: [...PREV.slices, { index: 1, title: 'Drop chars', head: 'slice2head', retried: false, decisions: [] }],
+    findings: [{ ...PREV.findings[0], outcome: 'applied' }, { id: 'mut-2', source: 'mutation', slice: 1, claim: 'm', evidence: 'x', severity: 'major', outcome: 'open' }] }
+  const { byLabel, result } = await runBuild({ from: 2 }, { 'sh:preflight': preflight({ build: done }), fix: { applied: ['mut-2'], declined: [] } })
+  const fix = byLabel('fix')[0].prompt
+  assert.ok(fix.includes('mut-2') && !fix.includes('peer-1-1'), fix)
+  assert.deepEqual(result.findings.map(f => f.outcome), ['applied', 'applied'])
+  const settled = await runBuild({ from: 2 }, { 'sh:preflight': preflight({ build: { ...done, findings: [done.findings[0]] } }) })
+  assert.equal(settled.byLabel('fix').length, 0, 'nothing pending: no fix agent')
+  assert.equal(settled.result.status, 'ready')
+})
+
+test('build: a peer finding records its slice, so a resume can carry it', async () => {
+  const { result } = await runBuild({}, { 'peer:2': { findings: [{ claim: 'p', evidence: 'src/slug.js:4', severity: 'minor' }] }, fix: { applied: ['peer-2-1'], declined: [] } })
+  assert.equal(result.findings[0].slice, 1)
+})
+
+test('build: from past the last slice runs only the review, and a from without its record blocks', async () => {
+  const prev = { ...PREV, slices: [...PREV.slices, { index: 1, title: 'Drop chars', head: 'slice2head', retried: false, decisions: [] }] }
+  const review = await runBuild({ from: 2 }, { 'sh:preflight': preflight({ build: prev }), fix: { applied: ['peer-1-1'], declined: [] } })
   assert.ok(!review.calls.some(c => c.opts.label.startsWith('impl:')))
   assert.equal(review.result.status, 'ready')
-  await assert.rejects(runBuild({ from: 3 }), /from/)
+  assert.deepEqual(review.result.slices.map(s => s.head), ['slice1head', 'slice2head'])
+  const none = await runBuild({ from: 1 })
+  assert.equal(none.result.status, 'blocked')
+  assert.match(none.result.reason, /from: 0/)
+  assert.equal(none.result.at, 1)
+  await assert.rejects(runBuild({ from: 3 }, { 'sh:preflight': preflight({ build: prev }) }), /from/)
   await assert.rejects(runBuild({ from: -1 }), /from/)
+})
+
+test('build: an early block returns at and keeps build.json, the record a resume reads', async () => {
+  const { result, byLabel } = await runBuild({}, { 'sh:preflight': { output: 'EXIT=1' } })
+  assert.equal(result.at, 0)
+  assert.equal(byLabel('sh:write:result:build').length, 0)
+  const noRecord = await runBuild({ from: 1 })
+  assert.equal(noRecord.byLabel('sh:write:result:build').length, 0)
+})
+
+test('build: a stop whose write fails keeps its status and reason', async () => {
+  const { result } = await runBuild({}, { 'impl:1': { ...IMPL, status: 'needs-human', reason: 'R-SECRET' }, 'sh:write:result:build': { output: 'EXIT=1' } })
+  assert.equal(result.status, 'needs-human')
+  assert.equal(result.reason, 'R-SECRET')
+  assert.match(result.warnings.join('\n'), /build.json not written/)
+})
+
+test('build: the fix check needs a commit only for a pending finding applied, not a settled id echoed', async () => {
+  const done = { ...PREV, at: 2, slices: [...PREV.slices, { index: 1, title: 'Drop chars', head: 'slice2head', retried: false, decisions: [] }],
+    findings: [{ ...PREV.findings[0], outcome: 'applied' }, { id: 'mut-2', source: 'mutation', slice: 1, claim: 'm', evidence: 'x', severity: 'major' }] }
+  const { byLabel } = await runBuild({ from: 2 }, { 'sh:preflight': preflight({ build: done }), fix: { applied: ['peer-1-1'], declined: [{ id: 'mut-2', why: 'src/a.js:1' }] } })
+  assert.doesNotMatch(byLabel('sh:check:fix')[0].prompt, /NO_COMMIT/)
 })
 
 test('build: the implementer is sonnet only for a low-risk slice of a complete contract', async () => {
@@ -865,14 +929,13 @@ test('build: the implementer starts from git status, keeps off the test-writer f
   const p = (await runBuild()).byLabel('impl:1')[0].prompt
   assert.match(p, /git status/)
   assert.ok(p.includes('test/slug.test.js'))
-  assert.match(p, /needs-human/)
+  assert.match(p, /If one of them is wrong, stop with status needs-human/)
   assert.match(p, /one commit/)
 })
 
 test('build: the check refuses a dirty tree, no new commit, or changed test-writer files', async () => {
   const chk = (await runBuild()).byLabel('sh:check:1')[0].prompt
   assert.ok(chk.includes("git diff --quiet 'def5678' HEAD -- 'test/slug.test.js'"), chk)
-  assert.ok(chk.includes("'h0'"))
   assert.match(chk, /git status --porcelain/)
 })
 
@@ -996,16 +1059,99 @@ test('build: a red-team finding is kept only when its test runs to a failure', a
   assert.match(byLabel('redteam')[0].prompt, /Never write in \/repo/)
 })
 
-test('build: the red-team worktree is removed even when a step throws', async () => {
-  const calls = []
-  await assert.rejects(runBuild({}, { 'review:correctness': { findings: [{ claim: 'c', evidence: 'src/slug.js:1', severity: 'major' }] }, 'fix': failing }, calls))
+test('build: a step that throws ends blocked at its slice, and the red-team worktree is still removed', async () => {
+  const { calls, result } = await runBuild({}, { 'review:correctness': { findings: [{ claim: 'c', evidence: 'src/slug.js:1', severity: 'major' }] }, 'fix': failing })
+  assert.equal(result.status, 'blocked')
+  assert.equal(result.at, 2)
+  assert.match(result.reason, /agent crashed/)
   assert.ok(calls.some(c => c.opts.label === 'sh:cleanup' && c.prompt.includes('git worktree remove --force')))
+  const inLoop = await runBuild({}, { 'peer:2': failing })
+  assert.equal(inLoop.result.status, 'blocked')
+  assert.equal(inLoop.result.at, 1)
 })
 
 test('build: a lens or red team that crashes is a warning, not silence', async () => {
-  const { result } = await runBuild({}, { 'redteam': failing })
-  assert.equal(result.status, 'ready')
-  assert.match(result.warnings.join('\n'), /redteam/)
+  const red = await runBuild({}, { 'redteam': failing })
+  assert.equal(red.result.status, 'ready')
+  assert.match(red.result.warnings.join('\n'), /redteam/)
+  const lens = await runBuild({}, { 'review:security': failing })
+  assert.match(lens.result.warnings.join('\n'), /review security/)
+})
+
+test('build: a failed worktree cleanup is a warning', async () => {
+  const { result, byLabel } = await runBuild({}, { 'sh:cleanup': { output: 'fatal: locked\nEXIT=1' } })
+  assert.match(result.warnings.join('\n'), /not removed/)
+  assert.match(byLabel('sh:cleanup')[0].prompt, /\|\| rc=1/)
+})
+
+test('build: a finding the fix leaves open blocks the run', async () => {
+  const { result } = await runBuild({}, {
+    'review:correctness': { findings: [{ claim: 'c', evidence: 'src/slug.js:3', severity: 'blocker' }] },
+    'fix': { applied: ['correctness-1: done'], declined: [] },
+  })
+  assert.equal(result.status, 'blocked')
+  assert.match(result.reason, /correctness-1/)
+  assert.equal(result.at, 2)
+})
+
+test('build: the fix check needs a new commit only when a fix was applied', async () => {
+  const f = { 'review:correctness': { findings: [{ claim: 'c', evidence: 'src/slug.js:3', severity: 'major' }] } }
+  const applied = await runBuild({}, { ...f, fix: { applied: ['correctness-1'], declined: [] } })
+  assert.match(applied.byLabel('sh:check:fix')[0].prompt, /NO_COMMIT/)
+  const declined = await runBuild({}, { ...f, fix: { applied: [], declined: [{ id: 'correctness-1', why: 'src/slug.js:3 is required' }] } })
+  assert.doesNotMatch(declined.byLabel('sh:check:fix')[0].prompt, /NO_COMMIT/)
+  assert.equal(declined.result.status, 'ready')
+})
+
+test('build: the tree is checked before the final gate even with no finding', async () => {
+  const { byLabel, result } = await runBuild({}, { 'sh:check:fix': { output: 'HEAD=h9\nDIRTY\nEXIT=3' } })
+  assert.ok(!byLabel('fix').length)
+  assert.equal(result.status, 'blocked')
+  assert.match(result.reason, /uncommitted/)
+  assert.ok(!byLabel('sh:final:suite').length)
+  const noHead = await runBuild({}, { 'sh:check:fix': { output: 'EXIT=0' } })
+  assert.equal(noHead.result.status, 'blocked')
+  assert.match(noHead.result.reason, /no HEAD line/)
+})
+
+test('build: a check without a HEAD line fails', async () => {
+  const { byLabel } = await runBuild({}, { 'sh:check:1': { output: 'EXIT=0' } })
+  assert.equal(byLabel('impl:1:retry').length, 1)
+})
+
+test('build: a red-team test file missing from the worktree is not a proof', async () => {
+  const red = { findings: [{ claim: 'c1', test: 'test/red1.test.js', command: 'node --test test/red1.test.js', severity: 'major' }] }
+  const { byLabel } = await runBuild({}, { redteam: red, 'sh:redteam:wt': { output: 'EXIT=0' }, 'sh:redteam:red-1': { output: 'NO_TEST\nEXIT=125' } })
+  assert.ok(byLabel('sh:redteam:red-1')[0].prompt.includes("if test -f 'test/red1.test.js'; then"))
+  assert.equal(byLabel('fix').length, 0, 'a missing test proves nothing: no finding to fix')
+})
+
+test('build: the retro must commit only its ADR', async () => {
+  const ok = await runBuild()
+  const chk = ok.byLabel('sh:check:adr')[0].prompt
+  assert.ok(chk.includes("full=$(git ls-tree --full-name --name-only HEAD -- 'docs/adr/0001-add-thing.md' 2>/dev/null)") &&
+    chk.includes(`git diff --name-only 'head-sh:check:fix' HEAD | grep -vxF -e "\${full:-/}" | grep -q .`) &&
+    chk.includes(`test "$(git cat-file -t 'HEAD:./docs/adr/0001-add-thing.md' 2>/dev/null)" = blob`), chk)
+  const abs = await runBuild({}, { retro: { adr: '/repo/./docs/adr/1.md', commit: 'c', rules: [] } })
+  assert.ok(abs.byLabel('sh:check:adr')[0].prompt.includes("'HEAD:./docs/adr/1.md'"), 'an absolute path under dir becomes relative')
+  const extra = await runBuild({}, { 'sh:check:adr': { output: 'EXTRA\nEXIT=0' } })
+  assert.equal(extra.result.status, 'blocked')
+  assert.match(extra.result.reason, /retro/)
+  const noAdr = await runBuild({}, { 'sh:check:adr': { output: 'NO_ADR\nEXIT=0' } })
+  assert.equal(noAdr.result.status, 'ready')
+  assert.equal(noAdr.result.adr, '')
+  assert.match(noAdr.result.warnings.join('\n'), /ADR/)
+})
+
+test('build: an experiment the retry invalidates stops the run, and a valid one keeps its measure', async () => {
+  const sl = { ...SLICES_JSON, slices: [SLICE('Try NFKD', { kind: 'experiment', hypothesis: 'h' }), SLICES_JSON.slices[1]] }
+  const retried = await runBuild({}, { 'sh:preflight': preflight({ slices: sl }), 'sh:gate:1': { output: 'EXIT=1' }, 'impl:1:retry': { ...IMPL, measure: '4ms', invalidated: true } })
+  assert.equal(retried.result.status, 'invalidated')
+  assert.equal(retried.result.measure, '4ms')
+  const valid = await runBuild({}, { 'sh:preflight': preflight({ slices: sl }), 'impl:1': { ...IMPL, measure: '0.2ms' } })
+  assert.equal(valid.result.slices[0].measure, '0.2ms')
+  const re = await runBuild({}, { 'sh:preflight': preflight({ slices: sl }), 'impl:1': { ...IMPL, measure: '0.2ms' }, 'sh:gate:1': { output: 'EXIT=1' }, 'sh:gate:1:retry': { output: 'EXIT=0' }, 'impl:1:retry': { ...IMPL, measure: '0.3ms' } })
+  assert.equal(re.result.slices[0].measure, '0.3ms', 'the retry measure replaces the first')
 })
 
 test('build: no finding means no fix agent', async () => {
