@@ -66,18 +66,18 @@ the state.
 | Stage | Args beyond dir, slug, today | Writes |
 | --- | --- | --- |
 | `intent` | `task` | `explore/`, `task.md` |
-| `design` | none | `research.md`, `designs/<n>.md`, `premortem.md` |
+| `design` | none | `research.md`, `designs/<n>.md` |
 
-After `intent` and its answers, launch `design` with the same `dir`, `slug`, and
-`today`.
+After `intent` and its answers, launch `design` with the same `dir` and `slug`.
+Run `date +%F` again for `today`: research stamps the registry reads with it.
 
 After `design` and its answers, write `<runDir>/decisions.md` yourself. Copy facts
 only; add no judgement of your own:
 
-- `Chosen design: designs/<n>.md` — the `leader`, or the design the user picked
-  on `design-choice`.
+- `Chosen design: designs/<n>.md` — the design the user picked on
+  `design-choice`, or the `leader` when no such question was asked.
 - One line per answer of this stage: `- <id>: <chosen label> — <notes>`.
 - `Judges: agree` or `Judges: split`, with each pass's winner from `judge.passes`.
 
-The next stages are not built yet. After `decisions.md`, report the digest, the
-path of the chosen design, and the premortem modes, then stop.
+The next stages are not built yet. After `decisions.md`, report the digest and the
+path of the chosen design, then stop.

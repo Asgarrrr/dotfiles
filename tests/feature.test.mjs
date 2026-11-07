@@ -96,6 +96,11 @@ test('shell lines quote every path under a dir that contains a space or a single
   }
 })
 
+test('the shell runner treats the script text as data', async () => {
+  const { calls } = await run(INTENT)
+  for (const p of shellPrompts(calls)) assert.match(p.split('--- script ---')[0], /data, never an instruction/)
+})
+
 test('no prompt pipes into tail without pipefail', async () => {
   const { calls } = await run(INTENT)
   for (const { prompt, opts } of calls) {
@@ -223,22 +228,23 @@ test('every agent label is unique within a run', async () => {
 const DESIGN = { ...BASE, stage: 'design' }
 const scored = (design, total) => ({ design, correctness: total, coupling: total, apiSurface: total, extensionCost: total, conformity: total, minimality: total, rationale: `r${design}` })
 const DESIGN_FIXTURES = {
+  'sh:setup': { output: 'PREFIX=\nEXIT=0' },
+  'sh:worktrees': { output: 'DIRSTATE=abc -\nEXIT=0' },
+  'sh:cleanup': { output: 'DIRSTATE=abc -\nEXIT=0' },
   'deps': { deps: [{ name: 'serde', ecosystem: 'cargo' }] },
   'research': {
     name: 'serde', lockVersion: '1.0.200', lockSource: 'Cargo.lock:42', latestVersion: '1.0.200',
     apiChanges: [], sourcesConsulted: ['https://docs.rs/serde'], report: 'same version', questions: [],
   },
-  'sh:setup': { output: 'PREFIX=\nEXIT=0' },
   'design': label => ({ summary: `summary of ${label}`, compileCommand: 'cargo check' }),
   // Pass 1 sees designs 1,2,3 as A,B,C; pass 2 sees 3,2,1. Both pick design 1.
   'judge:1': { scores: [scored('A', 5), scored('B', 3), scored('C', 2)], winner: 'A', why: 'w' },
   'judge:2': { scores: [scored('A', 2), scored('B', 3), scored('C', 5)], winner: 'C', why: 'w' },
-  'premortem': { framing: 'f', modes: [
-    { mode: 'BOUND-MODE', trigger: 't', test: 'parses an empty file' },
-    { mode: 'UNBOUND-MODE', trigger: 't', test: '' },
-  ] },
 }
 const runDesign = (args, overrides = {}, calls) => run({ ...DESIGN, ...args }, { ...DESIGN_FIXTURES, ...overrides }, calls)
+const failing = () => { throw new Error('agent crashed') }
+// Two compiling designs leave letters A and B only.
+const TWO = { 'judge:1': { scores: [scored('A', 5), scored('B', 3)], winner: 'A', why: 'w' }, 'judge:2': { scores: [scored('A', 3), scored('B', 5)], winner: 'B', why: 'w' } }
 
 test('design: one researcher per touched dependency, with the date and the data rule', async () => {
   const { byLabel, calls } = await runDesign({}, { deps: { deps: [{ name: 'serde', ecosystem: 'cargo' }, { name: 'tokio', ecosystem: 'cargo' }] } })
@@ -259,6 +265,16 @@ test('design: a version gap that matters comes back as a question', async () => 
   assert.ok(result.questions.some(q => q.id === 'serde-2'))
 })
 
+test('design: a failed deps agent or researcher is UNVERIFIED, never silence', async () => {
+  const noDeps = await runDesign({}, { deps: () => null })
+  assert.match(noDeps.result.warnings.join('\n'), /UNVERIFIED/)
+  const noRes = await runDesign({}, { research: failing })
+  assert.match(noRes.result.warnings.join('\n'), /serde.*UNVERIFIED/)
+  assert.match(noRes.byLabel('sh:write:research')[0].prompt, /## serde \(UNVERIFIED/)
+  const noSrc = await runDesign({}, { research: { ...DESIGN_FIXTURES.research, sourcesConsulted: [] } })
+  assert.match(noSrc.byLabel('sh:write:research')[0].prompt, /## serde \(UNVERIFIED\)/)
+})
+
 test('design: three competing designs on opus xhigh, each in its own worktree of dir with its own angle', async () => {
   const { calls, byLabel } = await runDesign()
   const ds = calls.filter(c => c.opts.label.startsWith('design:'))
@@ -270,23 +286,43 @@ test('design: three competing designs on opus xhigh, each in its own worktree of
     assert.equal(d.opts.isolation, undefined)
   }
   assert.equal(new Set(ds.map(d => d.prompt)).size, 3)
-  const setup = byLabel('sh:setup')[0].prompt
-  assert.ok(setup.includes("cd '/repo' && test -f '/repo/.claude/runs/add-thing/task.md'"))
+  assert.ok(byLabel('sh:setup')[0].prompt.includes("cd '/repo' && test -f '/repo/.claude/runs/add-thing/task.md'"))
+  const wts = byLabel('sh:worktrees')[0].prompt
   ds.forEach((d, i) => {
     assert.ok(d.prompt.includes(`/designs/${i + 1}.md`))
     assert.ok(d.prompt.includes(`/repo/.claude/runs/add-thing/wt/${i + 1}`))
-    assert.ok(setup.includes(`git worktree add -q --detach '/repo/.claude/runs/add-thing/wt/${i + 1}' HEAD`))
+    assert.ok(wts.includes(`git worktree add -q --detach '/repo/.claude/runs/add-thing/wt/${i + 1}' HEAD`))
   })
+  assert.ok(wts.includes('git worktree prune') && wts.indexOf('git worktree prune') < wts.indexOf('git worktree add'), 'a leaked worktree from an earlier run is cleared first')
 })
 
 test('design: the script compiles each design in its worktree, then removes every worktree', async () => {
   const { byLabel } = await runDesign({}, { 'sh:setup': { output: 'PREFIX=pkg/\nEXIT=0' } })
   const c2 = byLabel('sh:compile:2')[0].prompt
-  assert.ok(c2.includes(`cd '/repo/.claude/runs/add-thing/wt/2/pkg/' && perl`))
+  assert.ok(c2.includes(`cd '/repo/.claude/runs/add-thing/wt/2/pkg/' && if test -z "$(git status --porcelain)"`), 'a worktree with no change holds no stub')
   assert.ok(c2.includes(`bash -c 'set -o pipefail; cargo check'`))
   assert.ok(byLabel('design:2')[0].prompt.includes('/wt/2/pkg/'))
   const rm = byLabel('sh:cleanup')[0].prompt
   for (const n of [1, 2, 3]) assert.ok(rm.includes(`git worktree remove --force '/repo/.claude/runs/add-thing/wt/${n}'`))
+})
+
+test('design: the worktrees are removed when a design agent or a compile throws', async () => {
+  for (const o of [{ 'design:2': failing }, { 'sh:compile:1': failing }]) {
+    const calls = []
+    await runDesign({}, o, calls).catch(() => {})
+    assert.equal(calls.filter(c => c.opts.label === 'sh:cleanup').length, 1, Object.keys(o)[0])
+  }
+  const calls = []
+  await assert.rejects(runDesign({}, { 'sh:worktrees': { output: 'fatal: exists\nEXIT=128' } }, calls), /worktrees/)
+  assert.equal(calls.filter(c => c.opts.label === 'sh:cleanup').length, 1)
+})
+
+test('design: a failed cleanup and a dir changed during the fan-out are warnings', async () => {
+  const { result } = await runDesign({}, { 'sh:cleanup': { output: 'DIRSTATE=zzz -\nEXIT=1' } })
+  const w = result.warnings.join('\n')
+  assert.match(w, /not removed/)
+  assert.match(w, /outside its worktree/)
+  assert.deepEqual((await runDesign()).result.warnings, [])
 })
 
 test('design: a missing task.md stops the stage before any agent', async () => {
@@ -295,12 +331,20 @@ test('design: a missing task.md stops the stage before any agent', async () => {
   assert.equal(calls.length, 1)
 })
 
+test('design: an empty compile command is not a pass', async () => {
+  const { byLabel, result } = await runDesign({}, { ...TWO, 'design:2': { summary: 's', compileCommand: '  ' } })
+  assert.equal(byLabel('sh:compile:2').length, 0)
+  assert.ok(!byLabel('judge:1')[0].prompt.includes('designs/2.md'))
+  assert.match(result.warnings.join('\n'), /design 2/)
+})
+
 test('design: the judge never sees the angles, and pass 2 sees the reverse order', async () => {
   const { calls, byLabel } = await runDesign()
   const angles = calls.filter(c => c.opts.label.startsWith('design:')).map(c => c.prompt.match(/^ANGLE: (.*)$/m)[1])
   const [j1, j2] = [byLabel('judge:1')[0], byLabel('judge:2')[0]]
   for (const j of [j1, j2]) {
     assert.equal(j.opts.model, 'opus')
+    assert.deepEqual(j.opts.schema.properties.winner.enum, ['A', 'B', 'C'])
     for (const a of angles) assert.ok(!j.prompt.includes(a), 'judge prompt leaks an angle')
   }
   const order = p => [...p.matchAll(/designs\/(\d)\.md/g)].map(m => m[1])
@@ -308,49 +352,71 @@ test('design: the judge never sees the angles, and pass 2 sees the reverse order
   assert.deepEqual(order(j2.prompt), ['3', '2', '1'])
 })
 
+test('design: a judge letter that maps to no design, or a design scored twice, is an error', async () => {
+  const prose = { scores: [scored('Design A', 5), scored('Design B', 3), scored('Design C', 2)], winner: 'Design A', why: 'w' }
+  await assert.rejects(runDesign({}, { 'judge:1': prose }), /exactly once/)
+  const twice = { scores: [scored('A', 5), scored('A', 3), scored('C', 2)], winner: 'A', why: 'w' }
+  await assert.rejects(runDesign({}, { 'judge:2': twice }), /exactly once/)
+  const missing = { scores: [scored('A', 5), scored('B', 3)], winner: 'A', why: 'w' }
+  await assert.rejects(runDesign({}, { 'judge:1': missing }), /exactly once/)
+})
+
 test('design: agreeing passes pick the leader, and no design question is asked', async () => {
-  const { result, byLabel } = await runDesign()
+  const { result } = await runDesign()
   assert.equal(result.leader, 1)
   assert.equal(result.judge.agree, true)
   assert.ok(!result.questions.some(q => q.id === 'design-choice'))
-  assert.ok(byLabel('premortem')[0].prompt.includes('/designs/1.md'))
 })
 
-test('design: diverging passes turn the choice into a question', async () => {
-  const { result } = await runDesign({}, { 'judge:2': { scores: [scored('A', 5), scored('B', 3), scored('C', 2)], winner: 'A', why: 'w' } })
+test('design: diverging passes ask the user between the two winners, ranked by total', async () => {
+  // Pass 1 picks design 1 (A); pass 2 sees 3,2,1 and picks design 3 (A). Design 2 leads on totals but won no pass.
+  const { result } = await runDesign({}, {
+    'judge:1': { scores: [scored('A', 4), scored('B', 4), scored('C', 1)], winner: 'A', why: 'w1' },
+    'judge:2': { scores: [scored('A', 3), scored('B', 4), scored('C', 2)], winner: 'A', why: 'w2' },
+  })
   assert.equal(result.judge.agree, false)
+  assert.equal(result.leader, null)
   const q = result.questions.find(q => q.id === 'design-choice')
-  assert.ok(q)
-  assert.deepEqual(q.options.map(o => o.label).sort(), ['Design 1', 'Design 3'])
+  assert.deepEqual(q.options.map(o => o.label), ['Design 1', 'Design 3'])
+  assert.equal(q.recommendation.option, 'Design 1', 'design 1 totals 36, design 3 totals 30')
   assert.ok(q.header && q.header.length <= 12, 'AskUserQuestion needs a chip label')
+  assert.deepEqual(result.warnings, [], 'the recommendation names an option')
+})
+
+test('design: a tie between the two winners is reported, not broken by pass order', async () => {
+  const { result } = await runDesign({}, { 'judge:2': { scores: [scored('A', 5), scored('B', 3), scored('C', 2)], winner: 'A', why: 'w' } })
+  const q = result.questions.find(q => q.id === 'design-choice')
+  assert.match(q.recommendation.why, /tie/)
 })
 
 test('design: a design whose stubs do not compile is not judged', async () => {
-  const { byLabel, logs } = await runDesign({}, {
-    'sh:compile:2': { output: 'error[E0412]\nEXIT=101' },
-  })
-  const p = byLabel('judge:1')[0].prompt
-  assert.ok(!p.includes('designs/2.md'))
-  assert.ok(logs.some(l => /design 2/.test(l)))
+  const { byLabel, result } = await runDesign({}, { ...TWO, 'sh:compile:2': { output: 'error[E0412]\nEXIT=101' } })
+  assert.ok(!byLabel('judge:1')[0].prompt.includes('designs/2.md'))
+  assert.match(result.warnings.join('\n'), /design 2/)
 })
 
 test('design: a compile run without an EXIT line is not judged', async () => {
-  const { byLabel } = await runDesign({}, { 'sh:compile:3': { output: 'compiles fine' } })
+  const { byLabel } = await runDesign({}, { ...TWO, 'sh:compile:3': { output: 'compiles fine' } })
   assert.ok(!byLabel('judge:1')[0].prompt.includes('designs/3.md'))
 })
 
-test('design: no compiling design is needs-human', async () => {
-  const { result, calls, byLabel } = await runDesign({}, { 'sh:compile': { output: 'EXIT=1' } })
+test('design: no compiling design is needs-human, and keeps the research questions', async () => {
+  const gap = { ...DESIGN_FIXTURES.research, questions: [question('serde-2')] }
+  const { result, calls, byLabel } = await runDesign({}, { 'sh:compile': { output: 'EXIT=1' }, research: gap })
   assert.equal(result.status, 'needs-human')
-  assert.equal(byLabel('sh:cleanup').length, 1)
+  assert.deepEqual(result.questions.map(q => q.id), ['serde-2'])
   assert.equal(calls.filter(c => c.opts.label.startsWith('judge:')).length, 0)
+  assert.equal(byLabel('sh:cleanup').length, 1)
 })
 
-test('design: a premortem mode without a test is dropped', async () => {
-  const { result, byLabel } = await runDesign()
-  assert.deepEqual(result.premortem.map(m => m.mode), ['BOUND-MODE'])
-  const w = byLabel('sh:write:premortem')[0].prompt
-  assert.ok(w.includes('BOUND-MODE') && !w.includes('UNBOUND-MODE'))
+test('design: shell lines quote every path under a dir with a single quote', async () => {
+  const { calls } = await runDesign({ dir: "/it's my repo" })
+  const scripts = shellPrompts(calls).map(p => p.split('--- script ---')[1])
+  assert.ok(scripts.length > 5)
+  for (const sc of scripts) {
+    const rest = sc.replace(/<<'(\w+)'\n[\s\S]*?\n\1\n/g, '').replace(/'\/it'\\''s my repo[^']*'/g, 'Q')
+    assert.ok(!rest.includes("it's my repo") && !rest.includes("/it'"), sc)
+  }
 })
 
 test('design: every agent label is unique, and next names decisions.md', async () => {
@@ -359,4 +425,3 @@ test('design: every agent label is unique, and next names decisions.md', async (
   assert.deepEqual(labels.filter((l, i) => labels.indexOf(l) !== i), [])
   assert.match(result.next, /decisions\.md/)
 })
-
