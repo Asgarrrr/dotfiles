@@ -24,10 +24,11 @@ const FIXTURES = {
   'council:gpt': vet('GPT-CONCERN'),
   'council:synth': { concerns: [{ claim: 'OPUS-CONCERN', evidence: 'e', impact: 'shapes-plan', raisedBy: ['council:opus'], missedBy: ['council:gpt'] }] },
   'rebut': { verdict: 'real', reasoning: 'r' },
-  'preflight': { treeClean: true, dirtyFiles: [], testCommand: 'npm test', testExitCode: 0, failingTests: [] },
+  'preflight': { treeClean: true, dirtyFiles: [], testCommand: 'npm test', testExitCode: 0, failingTests: [],
+    branch: 'feat', head: 'ba5e123' },
   'plan': { slices: SLICES },
   'plan:audit': { gaps: [] },
-  'slice': { title: 't', status: 'done', command: 'x', exitCode: 0, output: 'ok' },
+  'slice': { title: 't', status: 'done', command: 'x', exitCode: 0, output: 'ok', commit: 'c0ffee' },
   'peer': { verdict: 'pass', issues: [] },
   'review': { findings: [{ file: 'a.js', issue: 'bug', severity: 'must-fix' }] },
   'red': { findings: [] },
@@ -133,4 +134,81 @@ test('each role runs on the model in the table', async () => {
   assert.deepEqual(slice, ['sonnet', 'opus'], 'low risk with contract on sonnet, high risk on opus')
   const { calls: noFable } = await run({ ...FULL, fable: false })
   assert.equal(noFable.find(c => c.opts.label === 'plan').opts.model, 'opus')
+})
+
+test('each slice commits with trailers that name the run base and the slice', async () => {
+  const { calls } = await run(FULL)
+  const briefs = calls.filter(c => /^slice:\d+:[^:]*$/.test(c.opts.label)).map(c => c.prompt)
+  assert.equal(briefs.length, 2)
+  briefs.forEach((b, i) => {
+    assert.match(b, /Big-Feature-Base: ba5e123/)
+    assert.match(b, new RegExp(`Big-Feature-Slice: ${i + 1}/2`))
+    assert.match(b, /never `git add -A`/)
+  })
+})
+
+test('a slice that reports done without a commit blocks the run', async () => {
+  const { result, byLabel } = await run(FULL, { slice: { title: 't', status: 'done', command: 'x', exitCode: 0, output: 'ok' } })
+  assert.equal(result.mode, 'blocked')
+  assert.equal(byLabel('peer:1:Skeleton:1').length, 0, 'no review of an uncommitted slice')
+})
+
+test('the peer review reads the slice commits, not the whole tree', async () => {
+  const { calls } = await run(FULL)
+  const peer = calls.find(c => c.opts.label.startsWith('peer:1:'))
+  assert.match(peer.prompt, /git log -p ba5e123\.\.c0ffee --grep="Big-Feature-Slice: 1\/2"/)
+  assert.doesNotMatch(peer.prompt, /uncommitted changes/)
+})
+
+test('the final review reads every commit since the run base', async () => {
+  const { byLabel } = await run(FULL)
+  assert.match(byLabel('review')[0].prompt, /git diff ba5e123\.\.HEAD/)
+})
+
+test('a run on a protected branch stops before the first slice', async () => {
+  for (const branch of ['main', 'master', 'develop']) {
+    const { result, calls } = await run(FULL, { preflight: { ...FIXTURES.preflight, branch } })
+    assert.equal(result.mode, 'blocked', branch)
+    assert.equal(calls.filter(c => c.opts.label.startsWith('slice:')).length, 0, branch)
+  }
+})
+
+test('each peer review starts at the previous slice commit, the retry included', async () => {
+  const slice = commit => ({ ...FIXTURES.slice, commit })
+  const { byLabel } = await run(FULL, {
+    'slice:1': slice('s1'), 'slice:2': slice('s2a'), 'slice:2:Persist:retry': slice('s2b'),
+    'peer:2:Persist:1': { verdict: 'fail', issues: ['x'] },
+  })
+  assert.match(byLabel('peer:2:Persist:1')[0].prompt, /s1\.\.s2a /)
+  assert.match(byLabel('peer:2:Persist:2')[0].prompt, /s1\.\.s2b /)
+})
+
+test('a retry that reports done without a commit blocks the run', async () => {
+  const { result, byLabel } = await run(FULL, {
+    'peer:1:Skeleton:1': { verdict: 'fail', issues: ['x'] },
+    'slice:1:Skeleton:retry': { ...FIXTURES.slice, commit: '' },
+  })
+  assert.equal(result.mode, 'blocked')
+  assert.equal(byLabel('peer:1:Skeleton:2').length, 0)
+})
+
+test('a run without a known base commit stops before the first slice and keeps the plan', async () => {
+  for (const preflight of [null, { ...FIXTURES.preflight, head: '' }, { ...FIXTURES.preflight, head: 'HEAD' }]) {
+    const { result, calls } = await run(FULL, { preflight })
+    assert.equal(result.mode, 'blocked')
+    assert.equal(calls.filter(c => c.opts.label.startsWith('slice:')).length, 0)
+    assert.deepEqual(result.slices, SLICES)
+    assert.doesNotMatch(result.next, /resumeFromRunId replays/)
+  }
+})
+
+test('the red team reads the run commits and the fix commits with the review trailer', async () => {
+  const { byLabel } = await run(FULL)
+  assert.match(byLabel('red')[0].prompt, /git diff ba5e123\.\.HEAD/)
+  assert.match(byLabel('fix')[0].prompt, /Big-Feature-Base: ba5e123" and "Big-Feature-Slice: review"/)
+})
+
+test('a slice is told which files held uncommitted work before the run', async () => {
+  const { byLabel } = await run(FULL, { preflight: { ...FIXTURES.preflight, treeClean: false, dirtyFiles: ['a.js'] } })
+  assert.match(byLabel('slice:1:Skeleton')[0].prompt, /uncommitted work before the run: a\.js/)
 })
