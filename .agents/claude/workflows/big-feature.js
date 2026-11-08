@@ -667,6 +667,17 @@ const SLICE_REVIEW = {
   },
   required: ['verdict', 'issues'],
 }
+// Named patterns, not "write clean code": a model follows a list it can check line by line.
+// The peer review reads the same string, so the two cannot drift apart.
+const SLOP = `Slop — each of these is a defect: ` +
+  `a guard for a state the types or the callers already rule out; ` +
+  `a catch or match arm that swallows an error, or re-wraps it without adding context; ` +
+  `a function with one caller that only renames or forwards a call; ` +
+  `a near-copy of an existing function (search for one before you write it); ` +
+  `a clone or copy that only silences the borrow checker or a type error; ` +
+  `a comment that restates the next line; logging the project does not do at this level; ` +
+  `a test that checks a mock was called, restates the implementation, or asserts a constant; ` +
+  `near-identical tests that a table of cases would replace.`
 const sliceBrief = (s, i) =>
   `In ${dir}, implement slice ${i + 1}/${plan.slices.length} of: ${task}\n\n` +
   `Slice: ${s.title}\nFiles: ${(s.files || []).join(', ')}\nApproach: ${s.approach}\n` +
@@ -682,6 +693,9 @@ const sliceBrief = (s, i) =>
   `no field or parameter unread by code in this slice, no extension point whose ` +
   `second consumer is hypothetical. Structure beyond what this slice's test exercises ` +
   `is speculative: leave it out.\n` +
+  `${SLOP}\n` +
+  `Once your test passes, reread your diff and delete every line whose removal keeps the tests green ` +
+  `and the contract honoured.\n` +
   `Then run: ${s.verification}\n` +
   `Prefer the project's quiet reporter when it has one (--reporter=dot, -q, --silent) ` +
   `and scope the run to the tests this slice touches — a full verbose suite buries the ` +
@@ -705,7 +719,8 @@ const reviewSlice = (s, i, attempt, commit) => agent(
   `Contract the slice had to honour:\n${s.contract || s.approach}\n` +
   `Fail the slice only for: a contract point not honoured, a design decision taken that the ` +
   `contract did not settle, a test that would pass against a plausibly-wrong implementation, ` +
-  `or code outside the slice's files. Verify each issue against the code. Style nits are not issues.`,
+  `code outside the slice's files, or slop as listed below. For slop, quote the lines to delete. ` +
+  `Verify each issue against the code. Formatting and naming nits are not issues.\n${SLOP}`,
   // The attempt in the label keeps a resumed run from replaying the first verdict.
   { label: `peer:${i + 1}:${(s.title || '').slice(0, 30)}:${attempt}`, phase: 'Implement',
     model: 'sonnet', effort: 'medium', schema: SLICE_REVIEW })

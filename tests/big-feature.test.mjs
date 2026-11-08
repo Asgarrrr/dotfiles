@@ -212,3 +212,14 @@ test('a slice is told which files held uncommitted work before the run', async (
   const { byLabel } = await run(FULL, { preflight: { ...FIXTURES.preflight, treeClean: false, dirtyFiles: ['a.js'] } })
   assert.match(byLabel('slice:1:Skeleton')[0].prompt, /uncommitted work before the run: a\.js/)
 })
+
+test('the implementer and the peer review share one slop list, and the implementer prunes its diff', async () => {
+  const { calls } = await run(FULL)
+  const brief = calls.find(c => c.opts.label === 'slice:1:Skeleton').prompt
+  const peer = calls.find(c => c.opts.label === 'peer:1:Skeleton:1').prompt
+  const list = brief.match(/Slop — [^\n]+/)
+  assert.ok(list, 'brief names the slop patterns')
+  assert.ok(peer.includes(list[0]), 'peer review checks the same patterns')
+  assert.match(brief, /delete every line whose removal keeps the tests green/)
+  assert.match(peer, /Fail the slice only for:[^]*slop/)
+})
