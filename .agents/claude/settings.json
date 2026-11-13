@@ -96,6 +96,15 @@
             "command": "rtk hook claude"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/verify-gate.sh",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -130,6 +139,23 @@
             "command": "~/.claude/hooks/verify-on-stop.sh",
             "timeout": 5,
             "statusMessage": "Checking verification evidence..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/verify-gate.sh",
+            "timeout": 1800,
+            "statusMessage": "Running scripts/verify..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/verify-gate.sh",
+            "timeout": 10
           }
         ]
       }
