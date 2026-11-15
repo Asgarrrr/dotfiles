@@ -13,6 +13,9 @@ export const meta = {
 
 const task = typeof args === 'string' ? args : args && args.task
 const dir = (args && args.dir) || 'the current working directory'
+// dir above is prose for prompts; shell lines need the real path or nothing.
+const shq = p => `'${String(p).replace(/'/g, `'\\''`)}'`
+const dirFlag = args && args.dir ? `-C ${shq(args.dir)} ` : ''
 const opts = typeof args === 'object' && args !== null ? args : {}
 // Accept "true" — args survive a JSON round-trip and booleans arrive as strings.
 const go = opts.go === true || opts.go === 'true'
@@ -130,9 +133,10 @@ const closeSchema = s => s.type === 'object'
 // the wrapper has nothing to paraphrase. mktemp keeps parallel seats from sharing files.
 const codexCall = (schema, question) =>
   `Run this from ${dir}. Replace <the question> with the question below, verbatim:\n\n` +
-  `  d=$(mktemp -d) && cat > "$d/schema.json" <<'SCHEMA'\n${JSON.stringify(closeSchema(schema))}\nSCHEMA\n` +
-  `  codex exec -C ${dir} -s read-only --ephemeral -m ${gptTier.model} -c model_reasoning_effort=${gptTier.effort} --output-schema "$d/schema.json" -o "$d/answer.json" - <<'PROMPT'\n  <the question>\n  PROMPT\n` +
-  `  cat "$d/answer.json"\n\n` +
+  // Heredoc terminators must sit at column 0, or the heredoc never closes.
+  `d=$(mktemp -d) && cat > "$d/schema.json" <<'SCHEMA'\n${JSON.stringify(closeSchema(schema))}\nSCHEMA\n` +
+  `codex exec ${dirFlag}-s read-only --ephemeral -m ${gptTier.model} -c model_reasoning_effort=${gptTier.effort} --output-schema "$d/schema.json" -o "$d/answer.json" - <<'PROMPT'\n<the question>\nPROMPT\n` +
+  `cat "$d/answer.json"\n\n` +
   `The -m flag is required: without it codex uses its configured default, which may ` +
   `not be a second family at all. The cat output is GPT's answer.\n` +
   `--- question to relay verbatim ---\n${question}\n--- end ---\n\n`
@@ -291,13 +295,13 @@ if (!givenSlices && seatsThatRan.length >= 2) {
   // defers to the last argument it read.
   // One rebuttal per (concern, seat that missed it) — routed to that seat's model.
   // Asking a default agent instead would let the raiser's own model confirm itself.
-  const rebuttalJobs = contested.flatMap(c =>
+  const rebuttalJobs = contested.flatMap((c, ci) =>
     (c.missedBy || [])
       .filter(seat => SEAT_MODEL[seat] && !(c.raisedBy || []).includes(seat))
-      .map(seat => ({ concern: c, seat })))
+      .map(seat => ({ concern: c, ci, seat })))
 
   if (rebuttalJobs.length) {
-    const rebuttals = (await parallel(rebuttalJobs.map(({ concern: c, seat }) => () => agent(
+    const rebuttals = (await parallel(rebuttalJobs.map(({ concern: c, ci, seat }) => () => agent(
       `You reviewed this task independently and did not raise the concern below. Another ` +
       `reasoner did. Decide whether it is real — you are not being asked to agree.\n\n` +
       `--- the concern ---\n[${c.impact}] ${c.claim}\nEvidence offered: ${c.evidence}\n--- end ---\n\n` +
@@ -313,7 +317,7 @@ if (!givenSlices && seatsThatRan.length >= 2) {
           codexCall(REBUTTAL, 'the concern, context and instructions above, verbatim') +
           `If codex fails, return verdict "unresolved" and say codex failed.`
         : ''),
-      { label: `rebut:${seat.replace('council:', '')}:${c.claim.slice(0, 18)}`, phase: 'Vet',
+      { label: `rebut:${seat.replace('council:', '')}:${ci + 1}:${c.claim.slice(0, 18)}`, phase: 'Vet',
         model: SEAT_MODEL[seat], effort: seat === 'council:gpt' ? 'medium' : 'high',
         schema: REBUTTAL }).then(v => ({ claim: c.claim, seat, verdict: v && v.verdict, reasoning: v && v.reasoning })))))
       .filter(Boolean)
@@ -340,11 +344,13 @@ if (!givenSlices && seatsThatRan.length >= 2) {
 
 // Prefer the council's de-duplicated concerns over the raw union: three seats
 // raising one risk should reach the planner once, not three times. Fall back to raw
-// findings when no council ran (single seat, or a carried plan).
+// findings when no council ran (single seat, or a carried plan). The synthesiser
+// only reads council seats, so vet:deps findings are added back explicitly.
 const councilConcerns = (councilVerdict && councilVerdict.concerns) || null
+const depsFindings = ((vetLabelled.find(x => x.seat === 'vet:deps') || {}).r || {}).findings || []
 const planConstraints = councilConcerns
-  ? [...councilConcerns.filter(c => c.impact === 'blocks-plan'),
-     ...councilConcerns.filter(c => c.impact === 'shapes-plan')]
+  ? [...depsFindings, ...councilConcerns].filter(c => c.impact === 'blocks-plan')
+      .concat([...depsFindings, ...councilConcerns].filter(c => c.impact === 'shapes-plan'))
   : [...blocking, ...shaping]
 
 // contested holds the annotated copies; planConstraints holds the originals. Look up
@@ -400,14 +406,16 @@ const constraints = (planConstraints.length
 // passed", which means nothing without a baseline. Running it here — not before
 // Implement — means the planner knows whether the suite is already red: told
 // "bun test exits 0" on a red repo, an implementer's shortest path to that criterion
-// is to "fix" the failing test nobody asked it to touch.
-if (!givenSlices) phase('Plan')
-const preflight = givenSlices ? null : await agent(
+// is to "fix" the failing test nobody asked it to touch. A carried plan needs the
+// baseline too: the review still reads it.
+phase(givenSlices ? 'Implement' : 'Plan')
+const preflight = await agent(
   `In ${dir}, record the starting state. Do not modify anything.\n` +
   `1. Is the working tree clean? Run git status --porcelain and report it verbatim (empty means clean).\n` +
   `2. Run the project's full test command once and report the exact command and its exit code.\n` +
+  `3. Report the current branch (git branch --show-current) and the HEAD sha (git rev-parse HEAD).\n` +
   `Report what you find. A dirty tree or a red baseline is not your problem to fix — record it.`,
-  { label: 'preflight', phase: 'Plan', model: 'sonnet', effort: 'low',
+  { label: 'preflight', phase: givenSlices ? 'Implement' : 'Plan', model: 'sonnet', effort: 'low',
     schema: {
       type: 'object',
       properties: {
@@ -416,20 +424,23 @@ const preflight = givenSlices ? null : await agent(
         testCommand: { type: 'string', description: 'exact command run, or "none" if the project has no test command' },
         testExitCode: { type: 'number', description: '0 = green baseline; -1 when no test command exists' },
         failingTests: { type: 'array', items: { type: 'string' }, description: 'names of already-failing tests; empty when green' },
+        branch: { type: 'string', description: 'empty on a detached HEAD' },
+        head: { type: 'string', description: 'full HEAD sha' },
       },
-      required: ['treeClean', 'dirtyFiles', 'testCommand', 'testExitCode', 'failingTests'],
+      required: ['treeClean', 'dirtyFiles', 'testCommand', 'testExitCode', 'failingTests', 'branch', 'head'],
     } })
 
 const baseline = preflight
   ? { clean: preflight.treeClean, dirty: preflight.dirtyFiles || [], cmd: preflight.testCommand,
-      exit: preflight.testExitCode, failing: preflight.failingTests || [] }
-  : { clean: null, dirty: [], cmd: 'unknown', exit: null, failing: [] }
-if (!givenSlices && !preflight) {
+      exit: preflight.testExitCode, failing: preflight.failingTests || [],
+      branch: preflight.branch || '', head: preflight.head || '' }
+  : { clean: null, dirty: [], cmd: 'unknown', exit: null, failing: [], branch: '', head: '' }
+if (!preflight) {
   log('preflight: agent lost — baseline unknown, every verification claim below is unanchored')
-} else if (!givenSlices) {
+} else {
   log(`preflight: tree ${baseline.clean ? 'clean' : `DIRTY (${baseline.dirty.length} file(s))`}, ` +
       `baseline ${baseline.exit === 0 ? 'green' : baseline.exit === -1 ? 'no test command' : `RED (exit ${baseline.exit})`}`)
-  if (!baseline.clean) log('preflight: uncommitted work present — the final diff will mix it with this run')
+  if (!baseline.clean) log('preflight: uncommitted work present — slices commit by name, so it stays out of the run commits')
   if (baseline.exit > 0) log('preflight: tests already failing — a slice "passing" proves less than it appears')
 }
 
@@ -614,10 +625,25 @@ if (!go) {
   }
 }
 
-// PRE-FLIGHT. Every downstream claim is phrased as "verification passed", which means
-// nothing without a baseline: a slice can pass against a suite that was already red,
-// and the final diff can attribute pre-existing uncommitted work to this run.
 phase('Implement')
+// Each slice lands as its own commit on top of the base, so a protected branch would
+// take the run's commits directly, and a missing base leaves nothing to diff against.
+const PROTECTED = ['main', 'master', 'develop']
+const knownHead = /^[0-9a-f]{7,40}$/i.test(baseline.head)
+if (PROTECTED.includes(baseline.branch) || !knownHead) {
+  const reason = knownHead
+    ? `on ${baseline.branch}: slices commit, so switch to a feature branch`
+    : `base commit unknown ("${baseline.head}": preflight lost, or the repo has no commit)`
+  log(`not implementing — ${reason}`)
+  return {
+    mode: 'blocked',
+    slices: plan.slices,
+    remaining: plan.slices.map(s => s.title || 'untitled'),
+    baseline,
+    // A resume would replay the cached preflight, with the old branch and HEAD.
+    next: `${reason}. Then start a fresh run with this slices array as args.slices and go:true — not resumeFromRunId.`,
+  }
+}
 const SLICE_RESULT = {
   type: 'object',
   properties: {
@@ -625,6 +651,7 @@ const SLICE_RESULT = {
     status: { type: 'string', enum: ['done', 'blocked'] },
     command: { type: 'string' },
     exitCode: { type: 'number' },
+    commit: { type: 'string', description: 'sha of the last commit of this slice; empty when blocked' },
     output: {
       type: 'string',
       description: 'last ~15 lines of verification output — enough to see pass/fail and the first real error. Not the whole run; a green suite needs one summary line.',
@@ -640,6 +667,17 @@ const SLICE_REVIEW = {
   },
   required: ['verdict', 'issues'],
 }
+// Named patterns, not "write clean code": a model follows a list it can check line by line.
+// The peer review reads the same string, so the two cannot drift apart.
+const SLOP = `Slop — each of these is a defect: ` +
+  `a guard for a state the types or the callers already rule out; ` +
+  `a catch or match arm that swallows an error, or re-wraps it without adding context; ` +
+  `a function with one caller that only renames or forwards a call; ` +
+  `a near-copy of an existing function (search for one before you write it); ` +
+  `a clone or copy that only silences the borrow checker or a type error; ` +
+  `a comment that restates the next line; logging the project does not do at this level; ` +
+  `a test that checks a mock was called, restates the implementation, or asserts a constant; ` +
+  `near-identical tests that a table of cases would replace.`
 const sliceBrief = (s, i) =>
   `In ${dir}, implement slice ${i + 1}/${plan.slices.length} of: ${task}\n\n` +
   `Slice: ${s.title}\nFiles: ${(s.files || []).join(', ')}\nApproach: ${s.approach}\n` +
@@ -655,43 +693,66 @@ const sliceBrief = (s, i) =>
   `no field or parameter unread by code in this slice, no extension point whose ` +
   `second consumer is hypothetical. Structure beyond what this slice's test exercises ` +
   `is speculative: leave it out.\n` +
+  `${SLOP}\n` +
+  `Once your test passes, reread your diff and delete every line whose removal keeps the tests green ` +
+  `and the contract honoured.\n` +
   `Then run: ${s.verification}\n` +
   `Prefer the project's quiet reporter when it has one (--reporter=dot, -q, --silent) ` +
   `and scope the run to the tests this slice touches — a full verbose suite buries the ` +
   `one line that matters.\n` +
-  `Return the verification command, its exit code, and the last lines of output. ` +
+  `When it passes, commit the slice. Stage only the files this slice changed, by name — ` +
+  `never \`git add -A\`: the tree may hold work that is not this run's. ` +
+  (baseline.dirty.length
+    ? `These files held uncommitted work before the run: ${baseline.dirty.join(', ')}. ` +
+      `If this slice must change one of them, return status "blocked" and name it — staging it would commit that work too. `
+    : '') +
+  `End the message ` +
+  `with these trailers, after a blank line:\n` +
+  `Big-Feature-Base: ${baseline.head}\nBig-Feature-Slice: ${i + 1}/${plan.slices.length}\n` +
+  `Return the commit sha, the verification command, its exit code, and the last lines of output. ` +
   `If verification still fails after 3 attempts, return status "blocked" with the real error — never fake success.`
-const reviewSlice = (s, i, attempt) => agent(
+const reviewSlice = (s, i, attempt, commit) => agent(
   `In ${dir}, review slice ${i + 1} ("${s.title}") of: ${task}\n` +
-  `Read the uncommitted changes to these files: ${(s.files || []).join(', ')}.\n` +
+  // The trailer filter drops a review-fix commit that a paused run left between two slices.
+  `Read the slice's commits: git log -p ${tip}..${commit} --grep="Big-Feature-Slice: ${i + 1}/${plan.slices.length}". ` +
+  `Its planned files: ${(s.files || []).join(', ')}.\n` +
   `Contract the slice had to honour:\n${s.contract || s.approach}\n` +
   `Fail the slice only for: a contract point not honoured, a design decision taken that the ` +
   `contract did not settle, a test that would pass against a plausibly-wrong implementation, ` +
-  `or code outside the slice's files. Verify each issue against the code. Style nits are not issues.`,
+  `code outside the slice's files, or slop as listed below. For slop, quote the lines to delete. ` +
+  `Verify each issue against the code. Formatting and naming nits are not issues.\n${SLOP}`,
   // The attempt in the label keeps a resumed run from replaying the first verdict.
-  { label: `peer:${(s.title || `slice ${i + 1}`).slice(0, 30)}:${attempt}`, phase: 'Implement',
+  { label: `peer:${i + 1}:${(s.title || '').slice(0, 30)}:${attempt}`, phase: 'Implement',
     model: 'sonnet', effort: 'medium', schema: SLICE_REVIEW })
 
+// A slice without its commit cannot be reviewed alone, resumed or measured.
+const requireCommit = r => r && r.status === 'done' && !r.commit
+  ? { ...r, status: 'blocked', output: `reported done without a commit: ${r.output}` }
+  : r
+
 const done = []
+let tip = baseline.head
 for (const [i, s] of plan.slices.entries()) {
   // Sonnet only implements what a contract has already designed; anything else stays on opus.
   // Slices from plans approved before contract/risk existed carry neither, and stay on opus.
   const cheap = s.risk === 'low' && Boolean(s.contract)
-  const label = `slice:${(s.title || `slice ${i + 1}`).slice(0, 30)}`
+  // The index keeps two titles that share their first 30 characters apart.
+  const label = `slice:${i + 1}:${(s.title || '').slice(0, 30)}`
   let model = cheap ? 'sonnet' : 'opus'
-  let r = await agent(sliceBrief(s, i),
-    { label, phase: 'Implement', model, effort: 'high', schema: SLICE_RESULT })
+  let r = requireCommit(await agent(sliceBrief(s, i),
+    { label, phase: 'Implement', model, effort: 'high', schema: SLICE_RESULT }))
   if (r && r.status === 'done') {
-    let peer = await reviewSlice(s, i, 1)
+    let peer = await reviewSlice(s, i, 1, r.commit)
     if (peer && peer.verdict === 'fail') {
       log(`slice ${i + 1} failed peer review (${peer.issues.length} issue(s)) — escalating to opus`)
       model = 'opus'
       r = await agent(
-        `${sliceBrief(s, i)}\n\nA previous attempt is already in the working tree. ` +
+        `${sliceBrief(s, i)}\n\nA previous attempt is already committed (${r.commit}). ` +
         `A peer review rejected it for:\n${peer.issues.map(x => `- ${x}`).join('\n')}\n` +
-        `Fix these issues in place, then re-run the verification.`,
+        `Fix these issues in a new commit with the same trailers, then re-run the verification.`,
         { label: `${label}:retry`, phase: 'Implement', model: 'opus', effort: 'high', schema: SLICE_RESULT })
-      peer = r && r.status === 'done' ? await reviewSlice(s, i, 2) : peer
+      r = requireCommit(r)
+      peer = r && r.status === 'done' ? await reviewSlice(s, i, 2, r.commit) : peer
       if (r && r.status === 'done' && peer && peer.verdict === 'fail') {
         r = { ...r, status: 'blocked', output: `peer review still failing: ${peer.issues.join('; ')}` }
       }
@@ -703,6 +764,7 @@ for (const [i, s] of plan.slices.entries()) {
     break
   }
   done.push(r)
+  tip = r.commit
   log(`slice ${i + 1}/${plan.slices.length} done (${model}): ${s.title}`)
   if (done.length >= until && i + 1 < plan.slices.length) {
     log(`stopping after ${done.length} slice(s) — read the diff, then relaunch to continue`)
@@ -726,7 +788,7 @@ let recheck = null
 // Review the whole diff, or a paused run's slices so far. Never a broken tree.
 if (done.length && done.every(d => d.status === 'done')) {
   review = await agent(
-    `In ${dir}, adversarially review the uncommitted changes (git diff + untracked files) implementing: ${task}.\n` +
+    `In ${dir}, adversarially review the commits of this run (git diff ${baseline.head}..HEAD) implementing: ${task}.\n` +
     (baseline.clean === false
       ? `NOTE: the tree was ALREADY DIRTY before this run — ${baseline.dirty.slice(0, 10).join(', ')}. ` +
         `Those changes are not this run's work. Do not review or attribute them.\n`
@@ -769,7 +831,7 @@ if (done.length && done.every(d => d.status === 'done')) {
   // Red team only where a missed defect is expensive: the slices the planner marked high.
   const risky = plan.slices.slice(0, done.length).filter(s => s.risk !== 'low')
   red = risky.length ? await agent(
-    `In ${dir}, you are the red team on the uncommitted changes implementing: ${task}.\n` +
+    `In ${dir}, you are the red team on the commits of this run (git diff ${baseline.head}..HEAD) implementing: ${task}.\n` +
     `Attack these high-risk slices:\n` +
     risky.map(s => `- ${s.title} (files: ${(s.files || []).join(', ')})\n  contract: ${s.contract || s.approach}`).join('\n') +
     `\nFind inputs, states or sequences that break the contract or a project invariant. ` +
@@ -795,11 +857,15 @@ if (done.length && done.every(d => d.status === 'done')) {
     .concat(((red && red.findings) || []).map(f => ({ ...f, severity: 'must-fix' })))
   if (mustFix.length) {
     log(`${mustFix.length} must-fix findings — applying fixes`)
-    await agent(
-      `In ${dir}, fix these review findings with the smallest possible diff, then re-run the project's test command and report command + exit code + output tail:\n` +
+    const fix = await agent(
+      `In ${dir}, fix these review findings with the smallest possible diff, then re-run the project's test command and report command + exit code + output tail. ` +
+      `Commit the fixes, staging files by name, with the trailers ` +
+      `"Big-Feature-Base: ${baseline.head}" and "Big-Feature-Slice: review". Return the commit sha:\n` +
       mustFix.map(f => `- ${f.file}: ${f.issue}`).join('\n'),
       // Findings arrive already diagnosed, and the recheck below verifies the result.
-      { label: 'fix', phase: 'Review', model: 'sonnet', effort: 'high' })
+      { label: 'fix', phase: 'Review', model: 'sonnet', effort: 'high',
+        schema: { type: 'object', properties: { commit: { type: 'string' } }, required: ['commit'] } })
+    if (!fix || !fix.commit) log('fix: no commit reported — the fixes may sit uncommitted, outside the run trailers')
 
     // The fixer grades its own work. Confirm against the tree before believing it.
     recheck = await agent(

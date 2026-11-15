@@ -39,111 +39,6 @@
   },
   "model": "opus",
   "disableClaudeAiConnectors": true,
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/safety-pre-tool.sh",
-            "timeout": 5,
-            "statusMessage": "Safety check..."
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "rtk hook claude"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/format-on-edit.sh",
-            "timeout": 10,
-            "statusMessage": "Formatting..."
-          }
-        ]
-      }
-    ],
-    "InstructionsLoaded": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/log-instructions.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/verify-on-stop.sh",
-            "timeout": 5,
-            "statusMessage": "Checking verification evidence..."
-          }
-        ]
-      }
-    ]
-  },
-  "worktree": {
-    "baseRef": "fresh"
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "bash $HOME/.claude/statusline-command.sh",
-    "refreshInterval": 60
-  },
-  "enabledPlugins": {
-    "sentrux@sentrux-marketplace": false,
-    "clangd-lsp@claude-plugins-official": false,
-    "paper-desktop@paper": false,
-    "frontend-design@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": false,
-    "code-review@claude-plugins-official": true,
-    "typescript-lsp@claude-plugins-official": true,
-    "rust-skills@rust-skills": false,
-    "rust-analyzer-lsp@claude-plugins-official": true
-  },
-  "extraKnownMarketplaces": {
-    "sentrux-marketplace": {
-      "source": {
-        "source": "github",
-        "repo": "sentrux/sentrux"
-      }
-    },
-    "cloudflare": {
-      "source": {
-        "source": "github",
-        "repo": "cloudflare/skills"
-      }
-    },
-    "paper": {
-      "source": {
-        "source": "github",
-        "repo": "paper-design/agent-plugins"
-      }
-    },
-    "rust-skills": {
-      "source": {
-        "source": "github",
-        "repo": "actionbook/rust-skills"
-      }
-    }
-  },
   "skillOverrides": {
     "agents-sdk": "off",
     "better-auth-best-practices": "off",
@@ -180,11 +75,145 @@
     "web-design-guidelines": "name-only",
     "web-perf": "name-only"
   },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/safety-pre-tool.sh",
+            "timeout": 5,
+            "statusMessage": "Safety check..."
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rtk hook claude"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/verify-gate.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/format-on-edit.sh",
+            "timeout": 10,
+            "statusMessage": "Formatting..."
+          }
+        ]
+      }
+    ],
+    "InstructionsLoaded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/log-instructions.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/verify-on-stop.sh",
+            "timeout": 5,
+            "statusMessage": "Checking verification evidence..."
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/verify-gate.sh",
+            "timeout": 1800,
+            "statusMessage": "Running scripts/verify..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/verify-gate.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "worktree": {
+    "baseRef": "fresh"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash $HOME/.claude/statusline-command.sh",
+    "refreshInterval": 60
+  },
+  "enabledPlugins": {
+    "sentrux@sentrux-marketplace": false,
+    "clangd-lsp@claude-plugins-official": false,
+    "paper-desktop@paper": true,
+    "frontend-design@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": false,
+    "code-review@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "rust-skills@rust-skills": true,
+    "rust-analyzer-lsp@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "sentrux-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "sentrux/sentrux"
+      }
+    },
+    "cloudflare": {
+      "source": {
+        "source": "github",
+        "repo": "cloudflare/skills"
+      }
+    },
+    "paper": {
+      "source": {
+        "source": "github",
+        "repo": "paper-design/agent-plugins"
+      }
+    },
+    "rust-skills": {
+      "source": {
+        "source": "github",
+        "repo": "actionbook/rust-skills"
+      }
+    }
+  },
   "feedbackSurveyRate": 0,
   "effortLevel": "high",
   "modelSettings": {
     "glm-5.3-uncensored": {
       "effortLevel": "medium"
+    },
+    "claude-fable-5-2": {
+      "effortLevel": "high"
     }
   },
   "autoCompactWindow": 350000,

@@ -22,7 +22,7 @@ flowchart TD
     start([args]) --> carried{slices given?}
 
     carried -- no --> explore
-    carried -- yes --> impl
+    carried -- yes --> preflight
 
     subgraph explore [Explore]
         e1[reader: conventions]
@@ -43,20 +43,23 @@ flowchart TD
         gpt --> synth
     end
 
-    vet --> preflight[preflight<br/>git status + test baseline]
-    preflight --> plan[plan<br/>walking skeleton, then slices]
+    vet --> preflight[preflight<br/>git status, branch, HEAD,<br/>test baseline]
+    preflight -- planning --> plan[plan<br/>walking skeleton, then slices]
+    preflight -- carried plan --> branchGate
     plan --> audit[plan:audit<br/>were constraints kept?<br/>only if Vet raised any]
     audit --> gate{go?}
 
     gate -- no --> planOut([return mode: plan<br/>slices + vetting + audit gaps])
-    gate -- yes --> impl
+    gate -- yes --> branchGate{off main/master/develop<br/>and HEAD is a sha?}
+    branchGate -- no --> branchOut([return mode: blocked])
+    branchGate -- yes --> impl
 
     impl[[Implement: one slice at a time]] --> allDone{every slice done?}
     allDone -- no --> stopOut([return mode: blocked or paused])
     allDone -- yes --> review
 
     subgraph review [Review]
-        rv[review<br/>full diff]
+        rv[review<br/>base..HEAD]
         red[red team<br/>high-risk slices only]
         fix[fix must-fix findings]
         recheck[recheck<br/>read tree + run tests]
@@ -79,9 +82,11 @@ flowchart TD
     sonnet --> st{status done?}
     opus --> st
     st -- no --> blocked([blocked: stop the run])
-    st -- yes --> peer1[peer review 1]
+    st -- yes --> committed{commit sha?}
+    committed -- no --> blocked
+    committed -- yes --> peer1[peer review 1<br/>this slice's trailer,<br/>previous tip..commit]
     peer1 -- pass --> next([next slice, or pause at until])
-    peer1 -- fail --> retry[retry on opus<br/>with the review issues]
+    peer1 -- fail --> retry[retry on opus<br/>new commit on top]
     retry --> peer2[peer review 2]
     peer2 -- pass --> next
     peer2 -- fail --> blocked
@@ -89,6 +94,11 @@ flowchart TD
 
 "done" is the implementer's own report. Neither the peer review nor the loop
 re-runs the slice's verification command.
+
+Each slice commits only its own files. Every commit carries two trailers:
+`Big-Feature-Base: <HEAD at preflight>` and `Big-Feature-Slice: <i>/<n>`.
+Review fixes use `Big-Feature-Slice: review`. The trailers let a later script
+attribute each line to its run and slice, so it can measure defects per run.
 
 ## Plan, then execute
 
@@ -104,7 +114,7 @@ sequenceDiagram
         Note over W: Explore, Vet, Plan replay from the resume cache
     else fresh session
         You->>W: slices: [...], go: true
-        Note over W: no Explore, Vet, Plan or preflight
+        Note over W: no Explore, Vet or Plan; preflight still runs
     end
     W-->>You: mode: executed, paused or blocked
 ```
@@ -112,11 +122,9 @@ sequenceDiagram
 ## Known issues
 
 From the audit of 2026-11-02. Each one needs a failing test before its fix.
+`tests/big-feature.test.mjs` runs the script against stubbed agents.
 
-- The codex heredoc terminator is indented, so the `PROMPT` heredoc never closes.
-- Without `dir`, `codex exec -C` receives the text "the current working directory".
-- When the council synthesis runs, `vet:deps` blocking findings never reach the planner.
-- A carried plan (`slices` + `go`) skips preflight and restarts at slice 1, so it re-implements slices already in the tree.
+- A carried plan (`slices` + `go`) restarts at slice 1, so it re-implements slices already in the tree.
 - Same-session resume depends on the resume cache. Before Claude Code 2.1.305, `parallel()` fan-outs can rerun on resume, so the planner can run again and execute a plan you did not approve.
 - The slice's `exitCode` is part of the result schema, but no step reads it.
 - With `go: true`, plan-audit gaps only reach the log; execution continues.
