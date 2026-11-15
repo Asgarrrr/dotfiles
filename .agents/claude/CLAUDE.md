@@ -30,10 +30,17 @@ verify → ship**.
 ## Delegation
 
 - Localized change (1-2 files, no architectural decision): handle it directly.
-- Otherwise: propose `/big-feature` with `task` and `dir` filled in, and let the
-  user launch it. Intent or design still open → propose `/brainstorm` first.
+- Design still open → propose `/brainstorm` first.
+- Specified task that fits one session: implement it yourself.
+- Larger: one `opus` `implementer` per slice, in sequence. Goal = spec path +
+  slice id, never a summary; still give tools, return format and acceptance
+  commands. After each slice: rerun the tests, `reviewer` on the diff, user
+  validates. Finish with a cross-slice review against the spec. Amendments go
+  into the spec file.
+- `/big-feature` only for unattended, parallel or repetitive work, or on request.
 - Never spawn a long-lived subagent that orchestrates a slice or a feature.
-  Orchestration belongs to the workflow script; each subagent does one short step.
+  Orchestration belongs to the main session or a workflow script; each
+  subagent does one short step.
 - User declines the workflow → `architect`, which defaults to PLAN mode: it
   returns the decomposition and stops. Relaunch with an explicit go.
 - Never delegate a task whose result you couldn't verify yourself.

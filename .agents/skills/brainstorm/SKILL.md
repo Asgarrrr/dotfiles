@@ -6,7 +6,7 @@ description: Shape an unclear feature or design with the user before any plan ex
 # Brainstorm
 
 Turn an open idea into an approved design through dialogue. The output is a design
-the user approved, handed to `/big-feature` as its task. No code, no plan.
+the user approved, ready to implement. No production code.
 
 ## Steps
 
@@ -20,12 +20,26 @@ the user approved, handed to `/big-feature` as its task. No code, no plan.
 4. If the request spans several independent subsystems, say so first and pick one
    to design.
 5. Propose 2-3 approaches with trade-offs. Lead with your recommendation and why.
+   Before the user picks, challenge your recommendation: `advisor` on the design,
+   `researcher` on any library or API not yet confirmed. Report what they found,
+   including dissent. Challenge here, not during implementation; if implementation
+   exposes a gap or contradiction, stop and amend the spec with the user. If a
+   trade-off hinges on a measurement, run `/prototype` (throwaway) before the
+   user picks, and report the numbers.
 6. Present the design in sections sized to their complexity, and confirm each one:
    components, data flow, error handling, how it is tested.
 7. Write the approved design to the project's plans directory (`docs/plans/` unless
-   its CLAUDE.md says otherwise). Commit only if the user asks.
-8. Hand off: propose `/big-feature` with the design file as the task. Do not plan or
-   implement here.
+   its CLAUDE.md says otherwise). End it with the slice list: run `slice-check` on
+   it and size each slice to one session. A slice that outgrows one session is
+   resized in the spec, never split ad hoc. Before the user approves, get a
+   second-model read: `codex exec -C <dir> -s read-only --ephemeral -m gpt-6-sol
+   -c model_reasoning_effort=high` on the original request against the spec —
+   uncovered requirements, edge cases, slice boundaries. Report its findings,
+   including dissent. Commit only if the user asks.
+8. Hand off by size, per the Delegation rules in the global CLAUDE.md. Fits one
+   session: implement it solo in a fresh session, then `/code-review` against the
+   spec. Larger: one `implementer` per slice, in sequence. Do not plan or implement
+   here.
 
 ## Visual companion
 

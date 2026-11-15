@@ -57,6 +57,5 @@ Reject — out loud — any phase that cannot fill all four lines.
 
 - After `slice-check` accepts the plan → use `premortem-bind` on the high-risk slices.
 - If `slice-check` rejects the plan → drop to `prototype` for the uncertain part, then re-plan.
-- `to-issues` will consume vertical-slice phases directly as independent issues.
 
 $ARGUMENTS

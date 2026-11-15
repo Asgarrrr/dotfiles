@@ -94,6 +94,5 @@ For each top-5 failure, produce **three** fields. If you cannot fill all three, 
 
 - After `slice-check` accepts the plan → run `premortem-bind` on the highest-risk slice.
 - If the pre-mortem surfaces an attractor → re-plan; do not patch.
-- The bindings produced here feed directly into `to-issues` as test-writing tasks.
 
 $ARGUMENTS
